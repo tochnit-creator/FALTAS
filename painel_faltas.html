@@ -1,0 +1,2113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Faltas — Televendas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+  // pdf.js 2.x: point workerSrc to the same origin build.
+  // In sandboxed/iframe contexts the worker may fall back to fake-worker mode,
+  // which works correctly — the warning is harmless. Suppress it by using the
+  // same file as both main and worker (no SharedArrayBuffer needed).
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+
+/* ===========================
+   DESIGN TOKENS
+=========================== */
+:root{
+  --bg:#0f1117;--surface:#181c27;--surface2:#1e2335;--border:#2a3050;
+  --accent:#4a9eff;--accent2:#ff6b35;--accent3:#22d3a5;--warn:#ffb830;
+  --danger:#ff4d6d;--text:#e4e8f0;--muted:#6b7a99;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:10px;--radius-sm:7px;
+  --pad:20px;--pad-sm:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html{font-size:16px;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden;}
+
+/* ===========================
+   HEADER
+=========================== */
+.header{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:12px 16px;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:200;gap:8px;
+}
+.logo{display:flex;align-items:center;gap:10px;min-width:0;}
+.logo .dot{width:8px;height:8px;flex-shrink:0;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.logo h1{font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;white-space:nowrap;}
+.logo span{font-family:var(--mono);font-size:9px;color:var(--muted);display:none;}
+.header-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.header-date{font-family:var(--mono);font-size:10px;color:var(--muted);display:none;}
+.btn-clear-header{padding:6px 10px;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;border:1px solid var(--danger);background:none;color:var(--danger);}
+
+/* ===========================
+   STATUS BAR (fontes)
+=========================== */
+.status-bar{
+  background:var(--surface2);border-bottom:1px solid var(--border);
+  padding:8px 16px;display:flex;gap:8px;align-items:center;
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+}
+.status-bar::-webkit-scrollbar{display:none;}
+.src-pill{
+  display:flex;align-items:center;gap:6px;padding:6px 10px;
+  border-radius:16px;border:1px solid var(--border);
+  cursor:pointer;transition:all .2s;flex-shrink:0;
+}
+.src-pill.updated{border-color:var(--accent3);background:rgba(34,211,165,.07);}
+.src-pill.never{border-color:var(--danger);background:rgba(255,77,109,.05);}
+.src-icon{font-size:13px;}
+.src-name{font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
+.src-time{font-family:var(--mono);font-size:9px;white-space:nowrap;display:none;}
+.src-pill.updated .src-name{color:var(--accent3);}
+.src-pill.never .src-name{color:var(--danger);}
+.status-hint{font-size:10px;color:var(--muted);white-space:nowrap;margin-left:auto;display:none;}
+
+/* ===========================
+   TABS — scrollable on mobile
+=========================== */
+.tabs{
+  display:flex;background:var(--surface);
+  border-bottom:1px solid var(--border);
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scroll-snap-type:x mandatory;
+}
+.tabs::-webkit-scrollbar{display:none;}
+.tab{
+  padding:10px 14px;font-size:11px;font-weight:700;
+  color:var(--muted);cursor:pointer;border:none;background:none;
+  border-bottom:2px solid transparent;transition:all .2s;
+  letter-spacing:.6px;text-transform:uppercase;
+  white-space:nowrap;scroll-snap-align:start;flex-shrink:0;
+}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+/* ===========================
+   MAIN CONTENT
+=========================== */
+.main{padding:12px 16px;max-width:1700px;margin:0 auto;}
+
+/* ===========================
+   UPLOAD GRID — 2 cols mobile, 4 desktop
+=========================== */
+.upload-grid{
+  display:grid;grid-template-columns:1fr 1fr;
+  gap:8px;margin-bottom:16px;
+}
+.upload-card{
+  background:var(--surface);border:1px dashed var(--border);
+  border-radius:var(--radius-sm);padding:12px;cursor:pointer;
+  transition:all .2s;position:relative;overflow:hidden;
+  min-height:72px;
+}
+.upload-card.loaded{border-style:solid;border-color:var(--accent3);}
+.upload-card.loaded::after{content:'✓';position:absolute;top:8px;right:10px;color:var(--accent3);font-size:13px;font-weight:700;}
+.upload-card input{display:none;}
+.upload-label{cursor:pointer;display:block;}
+.upload-icon{font-size:20px;margin-bottom:4px;}
+.upload-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:2px;}
+.upload-sub{font-size:9px;color:var(--muted);line-height:1.3;}
+.upload-sub.ok{color:var(--accent3);font-family:var(--mono);}
+
+/* ===========================
+   DAY VIEW
+=========================== */
+.dayview{
+  background:var(--surface);border:1px solid var(--accent);
+  border-radius:var(--radius);padding:14px;margin-bottom:16px;
+}
+.dayview-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
+.dayview-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent);}
+.dayview-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.day-btn{
+  padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;
+  cursor:pointer;border:1px solid var(--border);background:none;
+  color:var(--muted);transition:all .2s;white-space:nowrap;
+}
+.day-btn.active,.day-btn:active{border-color:var(--accent);color:var(--accent);}
+.day-input{
+  background:var(--surface2);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:6px 10px;
+  font-size:11px;font-family:var(--mono);outline:none;width:130px;
+}
+#day-showing{font-size:10px;color:var(--muted);font-family:var(--mono);}
+
+/* Day stats — 2 cols mobile, 5 desktop */
+.dayview-stats{
+  display:grid;grid-template-columns:1fr 1fr;
+  gap:8px;margin-bottom:12px;
+}
+.ds-card{background:var(--surface2);border-radius:7px;padding:10px 12px;border-left:3px solid var(--border);}
+.ds-card.blue{border-left-color:var(--accent);}
+.ds-card.orange{border-left-color:var(--accent2);}
+.ds-card.green{border-left-color:var(--accent3);}
+.ds-card.yellow{border-left-color:var(--warn);}
+.ds-card.red{border-left-color:var(--danger);}
+.ds-label{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:4px;}
+.ds-val{font-family:var(--mono);font-size:20px;font-weight:600;}
+.ds-card.blue .ds-val{color:var(--accent);}
+.ds-card.orange .ds-val{color:var(--accent2);}
+.ds-card.green .ds-val{color:var(--accent3);}
+.ds-card.yellow .ds-val{color:var(--warn);}
+.ds-card.red .ds-val{color:var(--danger);}
+
+/* Breakdown — 1 col mobile, 2 desktop */
+.breakdown-grid{display:grid;grid-template-columns:1fr;gap:8px;}
+.breakdown-box{background:var(--surface2);border-radius:7px;padding:12px;}
+.bb-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px;}
+.bb-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;}
+.bb-row:last-child{border-bottom:none;}
+.bb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+.bb-val{font-family:var(--mono);font-size:11px;color:var(--accent);white-space:nowrap;margin-left:8px;}
+
+/* ===========================
+   STATS ROW — 2 cols mobile, 5 desktop
+=========================== */
+.stats-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
+.stat-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px;}
+.stat-value{font-family:var(--mono);font-size:22px;font-weight:600;}
+.stat-value.blue{color:var(--accent);}
+.stat-value.orange{color:var(--accent2);}
+.stat-value.green{color:var(--accent3);}
+.stat-value.yellow{color:var(--warn);}
+.stat-value.red{color:var(--danger);}
+
+/* ===========================
+   HISTORY
+=========================== */
+.history-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;}
+.history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.history-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);}
+.history-list{display:flex;flex-direction:column;gap:5px;max-height:180px;overflow-y:auto;}
+.hist-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface2);border-radius:6px;font-size:11px;border-left:3px solid var(--border);}
+.hist-item.faltas{border-left-color:var(--accent);}
+.hist-item.conferencia{border-left-color:var(--accent3);}
+.hist-item.estoque{border-left-color:var(--accent2);}
+.hist-item.recebimento{border-left-color:var(--warn);}
+.hist-time{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:nowrap;}
+.hist-desc{flex:1;font-size:11px;}
+.hist-badge{font-family:var(--mono);font-size:9px;color:var(--muted);}
+
+/* ===========================
+   PENDING
+=========================== */
+.pending-section{background:var(--surface);border:1px solid var(--warn);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;}
+.pending-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;}
+.pending-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--warn);}
+
+/* ===========================
+   FILTERS
+=========================== */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;}
+.filter-input{
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text);border-radius:7px;padding:8px 12px;
+  font-size:12px;font-family:var(--sans);outline:none;transition:border .2s;
+  min-height:36px;
+}
+.filter-input:focus{border-color:var(--accent);}
+.filter-input::placeholder{color:var(--muted);}
+.filter-input.wide{flex:1;min-width:160px;}
+select.filter-input{cursor:pointer;}
+.btn{
+  padding:8px 16px;border-radius:7px;font-size:12px;font-weight:700;
+  cursor:pointer;border:none;transition:all .2s;
+  min-height:36px;white-space:nowrap;
+}
+.btn-primary{background:var(--accent);color:#000;}
+.btn-export{background:var(--accent3);color:#000;}
+.btn-danger{background:var(--danger);color:#fff;}
+.btn-sm{padding:5px 10px;font-size:10px;min-height:28px;}
+
+/* ===========================
+   TABLE
+=========================== */
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;}
+.table-header-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:6px;}
+.table-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+.table-count{font-family:var(--mono);font-size:10px;color:var(--muted);}
+.scroll-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.tbl{width:100%;border-collapse:collapse;min-width:500px;}
+.tbl th{
+  padding:8px 12px;font-size:9px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--muted);border-bottom:1px solid var(--border);
+  text-align:left;white-space:nowrap;cursor:pointer;user-select:none;
+}
+.tbl th:hover{color:var(--text);}
+.tbl td{padding:9px 12px;font-size:11px;border-bottom:1px solid #1a1f30;vertical-align:middle;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl tr:active td,.tbl tr:hover td{background:var(--surface2);}
+.tbl td.mono{font-family:var(--mono);font-size:10px;}
+
+/* ===========================
+   MOBILE CARD ROWS — replaces table on small screens
+=========================== */
+.card-list{display:none;flex-direction:column;gap:8px;padding:10px;}
+.falta-card{
+  background:var(--surface2);border-radius:8px;padding:12px;
+  border-left:3px solid var(--border);
+}
+.falta-card.est-zero{border-left-color:var(--danger);}
+.falta-card.est-low{border-left-color:var(--warn);}
+.falta-card.est-ok{border-left-color:var(--accent3);}
+.fc-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;gap:8px;}
+.fc-produto{font-size:12px;font-weight:700;flex:1;line-height:1.3;}
+.fc-qtd{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent2);flex-shrink:0;}
+.fc-meta{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;}
+.fc-tag{font-size:9px;padding:2px 7px;border-radius:4px;font-weight:700;}
+.fc-bot{display:flex;align-items:center;justify-content:space-between;margin-top:6px;}
+.fc-info{font-size:10px;color:var(--muted);font-family:var(--mono);}
+
+/* ===========================
+   BADGES
+=========================== */
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
+.badge-blue{background:rgba(74,158,255,.15);color:var(--accent);}
+.badge-green{background:rgba(34,211,165,.15);color:var(--accent3);}
+.badge-orange{background:rgba(255,107,53,.15);color:var(--accent2);}
+.badge-red{background:rgba(255,77,109,.15);color:var(--danger);}
+.badge-yellow{background:rgba(255,184,48,.15);color:var(--warn);}
+.badge-gray{background:rgba(107,122,153,.12);color:var(--muted);}
+.sdot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;}
+.sdot-g{background:var(--accent3);}
+.sdot-r{background:var(--danger);}
+.sdot-y{background:var(--warn);}
+
+/* ===========================
+   RESOLVE BUTTON
+=========================== */
+.resolve-btn{
+  padding:4px 10px;border-radius:5px;font-size:10px;font-weight:700;
+  cursor:pointer;border:1px solid var(--border);background:none;
+  color:var(--muted);transition:all .2s;min-height:26px;
+}
+.resolve-btn:active{border-color:var(--accent3);color:var(--accent3);}
+.resolve-btn.resolved{border-color:var(--accent3);color:var(--accent3);background:rgba(34,211,165,.1);}
+
+/* ===========================
+   PAGINATION
+=========================== */
+.pagination{display:flex;align-items:center;gap:5px;padding:12px 16px;border-top:1px solid var(--border);justify-content:center;flex-wrap:wrap;}
+.page-btn{padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:none;color:var(--muted);transition:all .2s;min-height:32px;}
+.page-btn.active,.page-btn:active{border-color:var(--accent);color:var(--accent);}
+
+/* ===========================
+   PANELS
+=========================== */
+.panel{display:none;}
+.panel.active{display:block;}
+
+/* ===========================
+   CONF GRID — 1 col mobile, 2 desktop
+=========================== */
+.conf-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:16px;}
+.conf-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;}
+.conf-card h3{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;color:var(--muted);}
+.conf-item{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);}
+.conf-item:last-child{border-bottom:none;}
+.conf-name{font-size:12px;font-weight:600;}
+.conf-meta{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:2px;}
+.conf-stat{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--accent);}
+
+/* ===========================
+   MISC
+=========================== */
+.empty{text-align:center;padding:40px 20px;color:var(--muted);}
+.empty-icon{font-size:36px;margin-bottom:12px;opacity:.3;}
+.empty p{font-size:12px;}
+.rec-highlight{color:var(--accent3);}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:var(--surface);}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+.toast{
+  position:fixed;bottom:16px;right:16px;left:16px;
+  background:var(--surface2);border:1px solid var(--accent3);
+  color:var(--accent3);padding:12px 16px;border-radius:8px;
+  font-size:12px;font-weight:700;z-index:9999;
+  transform:translateY(100px);opacity:0;transition:all .3s;text-align:center;
+}
+.toast.show{transform:translateY(0);opacity:1;}
+.pending-days{font-family:var(--mono);font-size:9px;color:var(--warn);margin-top:2px;}
+
+/* ===========================
+   RESPONSIVE — TABLET (600px+)
+=========================== */
+@media(min-width:600px){
+  .header{padding:14px 20px;}
+  .logo span{display:block;}
+  .header-date{display:block;}
+  .status-bar{padding:10px 20px;gap:10px;}
+  .src-time{display:block;}
+  .main{padding:16px 20px;}
+  .upload-grid{grid-template-columns:repeat(4,1fr);gap:10px;}
+  .dayview-stats{grid-template-columns:repeat(5,1fr);}
+  .breakdown-grid{grid-template-columns:1fr 1fr;}
+  .stats-row{grid-template-columns:repeat(5,1fr);}
+  .conf-grid{grid-template-columns:1fr 1fr;}
+  .status-hint{display:block;}
+  .toast{left:auto;right:20px;text-align:left;}
+}
+
+/* ===========================
+   RESPONSIVE — DESKTOP (900px+)
+=========================== */
+@media(min-width:900px){
+  .header{padding:14px 28px;}
+  .logo h1{font-size:15px;letter-spacing:2px;}
+  .tabs{padding:0 28px;}
+  .tab{padding:11px 20px;font-size:12px;}
+  .main{padding:20px 28px;}
+  .upload-card{padding:16px;}
+  .upload-icon{font-size:22px;margin-bottom:6px;}
+  .upload-title{font-size:12px;}
+  .upload-sub{font-size:10px;}
+  .dayview{padding:20px;}
+  .ds-val{font-size:24px;}
+  .stat-value{font-size:26px;}
+  .tbl th{padding:9px 14px;font-size:10px;}
+  .tbl td{padding:10px 14px;font-size:12px;}
+  .tbl td.mono{font-size:11px;}
+  .badge{font-size:10px;}
+
+  /* On desktop, show table; hide card list */
+  .scroll-wrap{display:block;}
+  .card-list{display:none !important;}
+}
+
+/* ===========================
+   MOBILE ONLY — card view for faltas table
+=========================== */
+@media(max-width:899px){
+  /* Hide table, show card list */
+  #tbl-faltas thead, #tbl-faltas tbody{display:none;}
+  .card-list{display:flex;}
+  /* Keep scroll-wrap visible for other tables */
+}
+/* ===========================
+   CRUZAMENTO INVESTIGATOR
+=========================== */
+.cruz-search-box{
+  background:var(--surface);border:1px solid var(--accent);
+  border-radius:var(--radius);padding:16px;margin-bottom:16px;
+}
+.cruz-search-title{font-size:13px;font-weight:700;color:var(--accent);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;}
+.cruz-search-desc{font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5;}
+.cruz-search-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+
+/* Result card per product */
+.cruz-prod-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);margin-bottom:12px;overflow:hidden;
+}
+.cruz-prod-header{
+  display:flex;align-items:center;gap:12px;padding:14px 16px;
+  background:var(--surface2);border-bottom:1px solid var(--border);
+  flex-wrap:wrap;gap:10px;
+}
+.cruz-prod-code{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent);flex-shrink:0;}
+.cruz-prod-name{font-size:13px;font-weight:600;flex:1;}
+.cruz-prod-stats{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto;}
+
+/* Person pills inside result */
+.person-section{padding:12px 16px;border-bottom:1px solid var(--border);}
+.person-section:last-child{border-bottom:none;}
+.person-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px;}
+.person-pills{display:flex;flex-wrap:wrap;gap:6px;}
+.person-pill{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:20px;border:1px solid var(--border);
+  background:var(--surface2);font-size:11px;font-weight:600;
+}
+.person-pill.conf{border-color:var(--accent);color:var(--accent);}
+.person-pill.sep{border-color:var(--accent2);color:var(--accent2);}
+.person-pill .pill-count{font-family:var(--mono);font-size:10px;opacity:.7;}
+
+/* Pedidos detail inside card */
+.cruz-pedidos{width:100%;border-collapse:collapse;}
+.cruz-pedidos th{padding:7px 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;}
+.cruz-pedidos td{padding:8px 12px;font-size:11px;border-bottom:1px solid #1a1f30;vertical-align:middle;}
+.cruz-pedidos tr:last-child td{border-bottom:none;}
+.cruz-pedidos tr:hover td{background:var(--surface2);}
+
+.cruz-empty{text-align:center;padding:40px 20px;color:var(--muted);}
+.cruz-empty-icon{font-size:40px;margin-bottom:12px;opacity:.3;}
+/* ===========================
+   INLINE CONFERENCIA FIELDS
+=========================== */
+.conf-input {
+  background: rgba(74,158,255,.07);
+  border: 1px solid rgba(74,158,255,.25);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: var(--sans);
+  width: 100%;
+  outline: none;
+  transition: border .2s, background .2s;
+  min-height: 30px;
+}
+.conf-input:focus {
+  border-color: var(--accent);
+  background: rgba(74,158,255,.12);
+}
+.conf-input.filled {
+  border-color: var(--accent3);
+  background: rgba(34,211,165,.07);
+  color: var(--accent3);
+  font-weight: 600;
+}
+.conf-input[type="number"] {
+  width: 80px;
+  text-align: center;
+}
+/* Print styles */
+@media print {
+  .header, .status-bar, .tabs, .upload-grid,
+  .stats-row, .filters, .pagination,
+  .card-list, .btn, .resolve-btn,
+  #panel-dia, #panel-historico, #panel-conferencia,
+  #panel-recebimento, #panel-cruzamento { display: none !important; }
+  body { background: white !important; color: black !important; }
+  .panel#panel-faltas { display: block !important; }
+  .table-wrap { border: 1px solid #ccc !important; }
+  .tbl th { background: #f0f0f0 !important; color: #000 !important; font-size: 9px !important; }
+  .tbl td { color: #000 !important; font-size: 9px !important; border-bottom: 1px solid #ddd !important; }
+  .conf-input { border: 1px solid #999 !important; background: #fff !important; color: #000 !important; }
+  .badge { border: 1px solid #ccc !important; color: #000 !important; background: #f5f5f5 !important; }
+  .sdot { display: none !important; }
+  @page { size: A4 landscape; margin: 10mm; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <div class="dot"></div>
+    <div>
+      <h1>Painel de Faltas</h1>
+      <span>Televendas · Conferência · Estoque · Recebimento</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="header-date" id="headerDate"></div>
+    <button class="btn-clear-header" onclick="clearHistory()">🗑</button>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="status-bar" id="statusBar">
+  <div class="src-pill never" id="pill-faltas" onclick="document.getElementById('inp-faltas').click()">
+    <span class="src-icon">📋</span>
+    <div>
+      <div class="src-name">Faltas Mês</div>
+      <div class="src-time" id="pill-faltas-time">Pendente de atualização</div>
+    </div>
+  </div>
+  <div class="src-pill never" id="pill-conf" onclick="document.getElementById('inp-conf').click()">
+    <span class="src-icon">✅</span>
+    <div>
+      <div class="src-name">Conferente Mês</div>
+      <div class="src-time" id="pill-conf-time">Pendente de atualização</div>
+    </div>
+  </div>
+  <div class="src-pill never" id="pill-est" onclick="document.getElementById('inp-est').click()">
+    <span class="src-icon">🗄️</span>
+    <div>
+      <div class="src-name">Estoque</div>
+      <div class="src-time" id="pill-est-time">Pendente de atualização</div>
+    </div>
+  </div>
+  <div class="src-pill never" id="pill-rec" onclick="document.getElementById('inp-rec').click()">
+    <span class="src-icon">📦</span>
+    <div>
+      <div class="src-name">Recebimento</div>
+      <div class="src-time" id="pill-rec-time">Pendente de atualização</div>
+    </div>
+  </div>
+  <span style="font-size:11px;color:var(--muted);margin-left:auto">Clique em qualquer fonte para atualizar</span>
+</div>
+
+<!-- HIDDEN INPUTS -->
+<input type="file" id="inp-faltas" accept=".pdf,.txt" style="display:none" onchange="loadFaltasPDF(this)">
+<input type="file" id="inp-conf" accept=".pdf,.txt" style="display:none" onchange="loadConfPDF(this)">
+<input type="file" id="inp-est" accept=".xlsx,.xls" style="display:none" onchange="loadEstoque(this)">
+<input type="file" id="inp-rec" accept=".xlsx,.xls" style="display:none" onchange="loadRecebimento(this)">
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('dia')">📅 Visão do Dia</button>
+  <button class="tab" onclick="switchTab('faltas')">📋 Faltas</button>
+  <button class="tab" onclick="switchTab('historico')">🕐 Histórico</button>
+  <button class="tab" onclick="switchTab('conferencia')">✅ Conferência</button>
+  <button class="tab" onclick="switchTab('recebimento')">📦 Recebimento</button>
+  <button class="tab" onclick="switchTab('cruzamento')">🔗 Cruzamento</button>
+</div>
+
+<div class="main">
+
+  <!-- UPLOAD SECTION (always visible) -->
+  <div class="upload-grid">
+    <div class="upload-card" id="card-faltas">
+      <label class="upload-label" for="inp-faltas">
+        <div class="upload-icon">📋</div>
+        <div class="upload-title">PDF Faltas</div>
+        <div class="upload-sub" id="sub-faltas">Clique para carregar</div>
+      </label>
+    </div>
+    <div class="upload-card" id="card-conf">
+      <label class="upload-label" for="inp-conf">
+        <div class="upload-icon">✅</div>
+        <div class="upload-title">PDF Conferência</div>
+        <div class="upload-sub" id="sub-conf">Clique para carregar</div>
+      </label>
+    </div>
+    <div class="upload-card" id="card-est">
+      <label class="upload-label" for="inp-est">
+        <div class="upload-icon">🗄️</div>
+        <div class="upload-title">Estoque (Excel)</div>
+        <div class="upload-sub" id="sub-est">Clique para carregar</div>
+      </label>
+    </div>
+    <div class="upload-card" id="card-rec">
+      <label class="upload-label" for="inp-rec">
+        <div class="upload-icon">📦</div>
+        <div class="upload-title">Recebimento (Excel)</div>
+        <div class="upload-sub" id="sub-rec">Col C: Data · D: Código · G: Qtd</div>
+      </label>
+    </div>
+  </div>
+
+  <!-- ===== VISÃO DO DIA ===== -->
+  <div class="panel active" id="panel-dia">
+    <div class="dayview">
+      <div class="dayview-header">
+        <span class="dayview-title">📅 Análise por Data</span>
+        <div class="dayview-nav">
+          <button class="day-btn" onclick="setDay('hoje')">Hoje</button>
+          <button class="day-btn active" onclick="setDay('ontem')">Ontem</button>
+          <button class="day-btn" onclick="setDay('semana')">Últimos 7 dias</button>
+          <input type="date" id="day-input" class="day-input" onchange="setDay('custom')">
+          <span style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="day-showing"></span>
+        </div>
+      </div>
+      <div class="dayview-stats" id="day-stats">
+        <div class="ds-card blue"><div class="ds-label">Faltas no Período</div><div class="ds-val">—</div></div>
+        <div class="ds-card orange"><div class="ds-label">Produtos Únicos</div><div class="ds-val">—</div></div>
+        <div class="ds-card red"><div class="ds-label">Clientes Afetados</div><div class="ds-val">—</div></div>
+        <div class="ds-card yellow"><div class="ds-label">Sem Estoque</div><div class="ds-val">—</div></div>
+        <div class="ds-card green"><div class="ds-label">Valor não Faturado</div><div class="ds-val">—</div></div>
+      </div>
+      <div class="breakdown-grid" id="day-breakdown">
+        <div class="breakdown-box">
+          <div class="bb-title">Top Clientes Afetados</div>
+          <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Carregue o PDF de Faltas</div>
+        </div>
+        <div class="breakdown-box">
+          <div class="bb-title">Top Produtos com Falta</div>
+          <div style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">Carregue o PDF de Faltas</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Day faltas table -->
+    <div class="table-wrap">
+      <div class="table-header-row">
+        <span class="table-title">Faltas do Período Selecionado</span>
+        <span class="table-count" id="day-count">0 itens</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Data</th><th>Código</th><th>Produto</th><th>Qtd</th>
+            <th>Estoque</th><th>Posição</th><th>N° Pedido</th><th>Cliente</th>
+          </tr></thead>
+          <tbody id="tbody-day"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== FALTAS ===== -->
+  <div class="panel" id="panel-faltas">
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Total Faltas</div><div class="stat-value blue" id="st-faltas">—</div></div>
+      <div class="stat-card"><div class="stat-label">Produtos Únicos</div><div class="stat-value orange" id="st-prods">—</div></div>
+      <div class="stat-card"><div class="stat-label">Sem Estoque</div><div class="stat-value red" id="st-zero">—</div></div>
+      <div class="stat-card"><div class="stat-label">Recebimentos</div><div class="stat-value green" id="st-rec">—</div></div>
+      <div class="stat-card"><div class="stat-label">Resolvidos</div><div class="stat-value yellow" id="st-resolvidos">0</div></div>
+    </div>
+    <div class="filters">
+      <input class="filter-input wide" type="text" id="f-busca" placeholder="🔍 Produto, pedido, cliente..." oninput="renderFaltas()">
+      <input class="filter-input" type="date" id="f-data-ini" onchange="renderFaltas()" title="Data inicial">
+      <input class="filter-input" type="date" id="f-data-fim" onchange="renderFaltas()" title="Data final">
+      <select class="filter-input" id="f-rep" onchange="renderFaltas()" style="display:none"><option value="">Todos Reps</option></select>
+      <select class="filter-input" id="f-tv" onchange="renderFaltas()" style="display:none"><option value="">Todos Televendas</option></select>
+      <select class="filter-input" id="f-status" onchange="renderFaltas()">
+        <option value="">Todos Status</option>
+        <option value="pendente">Pendentes</option>
+        <option value="resolvido">Resolvidos</option>
+        <option value="sem_estoque">Sem Estoque</option>
+      </select>
+      <button class="btn btn-export" onclick="exportFaltas()">⬇ Excel</button>
+      <button class="btn" style="background:var(--accent);color:#000" onclick="exportConferencia()">🖨️ Imprimir Conferência</button>
+      <button class="btn btn-danger btn-sm" onclick="limparConferencia()" title="Limpar todos os campos de conferência">🗑 Limpar Conf.</button>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header-row">
+        <span class="table-title">Faltas Registradas</span>
+        <span class="table-count" id="faltas-count">0 itens</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl" id="tbl-faltas">
+          <thead><tr>
+            <th onclick="sortF('data')">Data ↕</th>
+            <th onclick="sortF('codigo')">Código ↕</th>
+            <th onclick="sortF('produto')">Produto ↕</th>
+            <th onclick="sortF('qtd')">Qtd ↕</th>
+            <th onclick="sortF('estoque')">Estoque ↕</th>
+            <th onclick="sortF('posicao')">Posição ↕</th>
+            <th>N° Pedido</th><th>Cliente</th>
+            <th>Recebeu?</th>
+            <th style="background:rgba(74,158,255,.08);color:var(--accent);min-width:130px">✏️ Conferido por</th>
+            <th style="background:rgba(74,158,255,.08);color:var(--accent);min-width:90px">📦 Qtd Físico</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody id="tbody-faltas"></tbody>
+        </table>
+      </div>
+      <!-- Mobile card list (hidden on desktop via CSS) -->
+      <div class="card-list" id="card-list-faltas"></div>
+      <div class="pagination" id="pag-faltas"></div>
+    </div>
+  </div>
+
+  <!-- ===== HISTÓRICO ===== -->
+  <div class="panel" id="panel-historico">
+    <div class="history-section">
+      <div class="history-header">
+        <span class="history-title">🕐 Log de Atualizações</span>
+        <button class="btn btn-danger btn-sm" onclick="clearHistory()">Limpar</button>
+      </div>
+      <div class="history-list" id="history-list">
+        <div style="color:var(--muted);font-size:12px;padding:16px 0;text-align:center">Nenhuma atualização registrada ainda</div>
+      </div>
+    </div>
+
+    <div class="pending-section">
+      <div class="pending-header">
+        <span class="pending-title">⚠️ Faltas Pendentes — sem resolução desde o upload</span>
+        <span class="table-count" id="pending-count">0 itens</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Desde</th><th>Dias</th><th>Código</th><th>Produto</th>
+            <th>Qtd Total</th><th>Estoque Atual</th><th>Recebimento</th><th>Situação</th><th>Ação</th>
+          </tr></thead>
+          <tbody id="tbody-pending"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CONFERÊNCIA ===== -->
+  <div class="panel" id="panel-conferencia">
+    <div class="conf-grid" id="conf-summary"></div>
+    <div class="filters">
+      <input class="filter-input wide" type="text" id="cf-busca" placeholder="🔍 Conferente, pedido, cliente..." oninput="renderConf()">
+      <select class="filter-input" id="cf-conf" onchange="renderConf()"><option value="">Todos Conferentes</option></select>
+      <select class="filter-input" id="cf-sep" onchange="renderConf()"><option value="">Todos Separadores</option></select>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header-row">
+        <span class="table-title">Registros de Conferência</span>
+        <span class="table-count" id="conf-count">0 itens</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Data</th><th>Pedido</th><th>Cliente</th>
+            <th>Conferente</th><th>Separador</th><th>Itens</th><th>Vol.</th><th>Tempo</th>
+          </tr></thead>
+          <tbody id="tbody-conf"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pag-conf"></div>
+    </div>
+  </div>
+
+  <!-- ===== RECEBIMENTO ===== -->
+  <div class="panel" id="panel-recebimento">
+    <div class="filters">
+      <input class="filter-input wide" type="text" id="r-busca" placeholder="🔍 Produto, código..." oninput="renderRec()">
+      <input class="filter-input" type="date" id="r-data" onchange="renderRec()">
+      <button class="btn btn-primary" onclick="document.getElementById('r-data').value='';renderRec()">Limpar data</button>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header-row">
+        <span class="table-title">Recebimentos</span>
+        <span class="table-count" id="rec-count">0 itens</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Data Entrada</th><th>Código</th><th>Produto</th>
+            <th>Qtd Entrada</th><th>Fornecedor</th><th>NF</th>
+          </tr></thead>
+          <tbody id="tbody-rec"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pag-rec"></div>
+    </div>
+  </div>
+
+  <!-- ===== CRUZAMENTO ===== -->
+  <div class="panel" id="panel-cruzamento">
+
+    <!-- INVESTIGATOR SEARCH -->
+    <div class="cruz-search-box">
+      <div class="cruz-search-title">🔍 Investigar item por data</div>
+      <div class="cruz-search-desc">Digite o código ou nome do produto e escolha a data — o painel mostra quem conferiu e quem separou os pedidos que tiveram falta nesse item naquele dia.</div>
+      <div class="cruz-search-row">
+        <input class="filter-input wide" type="text" id="x-busca"
+          placeholder="Código ou nome do produto (ex: 3340, CADEADO...)"
+          oninput="renderCruz()">
+        <input class="filter-input" type="date" id="x-data" onchange="renderCruz()" title="Data da falta">
+        <button class="btn btn-primary" onclick="document.getElementById('x-data').value='';renderCruz()">Todas as datas</button>
+        <button class="btn btn-export" onclick="exportCruz()">⬇ Excel</button>
+      </div>
+    </div>
+
+    <!-- RESULT CARDS (per product) -->
+    <div id="cruz-results"></div>
+
+    <!-- SUMMARY TABLE -->
+    <div class="table-wrap" id="cruz-table-wrap" style="display:none">
+      <div class="table-header-row">
+        <span class="table-title">🔗 Resultado do Cruzamento</span>
+        <span class="table-count" id="cruz-count">0 linhas</span>
+      </div>
+      <div class="scroll-wrap">
+        <table class="tbl">
+          <thead><tr>
+            <th>Data</th>
+            <th>Código</th>
+            <th>Produto</th>
+            <th>N° Pedido</th>
+            <th>Cliente</th>
+            <th>Qtd Falta</th>
+            <th>Conferente</th>
+            <th>Separador</th>
+            <th>Estoque</th>
+            <th>Recebeu?</th>
+          </tr></thead>
+          <tbody id="tbody-cruz"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// STATE + STORAGE
+// ============================================================
+const KEYS = { history:'pf_history', resolved:'pf_resolved', firstSeen:'pf_firstSeen', updates:'pf_updates', confData:'pf_confData' };
+
+const S = {
+  faltas: [],
+  conferencia: [],
+  estoque: {},
+  recebimento: [],
+  resolved: new Set(safeLoad(KEYS.resolved, [])),
+  history: safeLoad(KEYS.history, []),        // upload log
+  firstSeen: safeLoad(KEYS.firstSeen, {}),    // { id: timestamp } first time falta was seen
+  updates: safeLoad(KEYS.updates, {}),        // { source: { ts, file, count } }
+  sortKey: 'data', sortDir: 1,
+  pages: { faltas:1, conf:1, rec:1 },
+  dayMode: 'ontem',
+  PAGE: 50,
+  confData: safeLoad('pf_confData', {}) // { faltaId: { conferidoPor, qtdFisico } }
+};
+
+function safeLoad(key, def) {
+  try { return JSON.parse(localStorage.getItem(key)) || def; } catch(e) { return def; }
+}
+function safeSave(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){} }
+
+// ============================================================
+// SUPABASE INIT
+// ============================================================
+const SB_URL  = 'https://bkhpffcfnodlmszuited.supabase.co';
+const SB_KEY  = 'sb_publishable_ynfKcbdyJW7DDO_zW4KOqw_7RMBzyQ4';
+const db = supabase.createClient(SB_URL, SB_KEY);
+
+// Detect current period (yyyy-mm)
+function getPeriod() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+// ============================================================
+// DB — SAVE FUNCTIONS (called after each PDF/Excel upload)
+// ============================================================
+
+async function dbSaveFaltas(rows, periodo) {
+  // Delete existing rows for same period before inserting fresh data
+  await db.from('faltas').delete().eq('periodo', periodo);
+  if (!rows.length) return;
+  const payload = rows.map(f => ({
+    data: f.data, codigo: f.codigo, produto: f.produto,
+    qtd: f.qtd, valor: f.valor, pedido: f.pedido,
+    cliente: f.cliente, estoque: f.estoque,
+    rep: f.rep, televenda: f.televenda,
+    resolvido: false, periodo
+  }));
+  // Insert in chunks of 500
+  for (let i = 0; i < payload.length; i += 500) {
+    const { error } = await db.from('faltas').insert(payload.slice(i, i + 500));
+    if (error) console.error('dbSaveFaltas error:', error);
+  }
+  // Save historico
+  await db.from('historico').insert({ tipo: 'faltas', arquivo: periodo, registros: rows.length, periodo });
+}
+
+async function dbSaveConferencia(rows, periodo) {
+  await db.from('conferencia').delete().eq('periodo', periodo);
+  if (!rows.length) return;
+  const payload = rows.map(c => ({
+    data: c.data, hora_ini: c.hora_ini, pedido: c.pedido,
+    cliente: c.cliente, conferente: c.conferente, separador: c.separador,
+    itens: c.itens, disp: c.disp, vol: c.vol, tempo: c.tempo, periodo
+  }));
+  for (let i = 0; i < payload.length; i += 500) {
+    const { error } = await db.from('conferencia').insert(payload.slice(i, i + 500));
+    if (error) console.error('dbSaveConferencia error:', error);
+  }
+  await db.from('historico').insert({ tipo: 'conferencia', arquivo: periodo, registros: rows.length, periodo });
+}
+
+async function dbSaveEstoque(rows) {
+  // Upsert by codigo
+  const payload = rows.map(([cod, e]) => ({
+    codigo: cod, produto: e.produto, estoque: e.estoque, posicao: e.posicao
+  }));
+  for (let i = 0; i < payload.length; i += 500) {
+    const { error } = await db.from('estoque').upsert(payload.slice(i, i + 500), { onConflict: 'codigo' });
+    if (error) console.error('dbSaveEstoque error:', error);
+  }
+  await db.from('historico').insert({ tipo: 'estoque', arquivo: 'estoque', registros: payload.length });
+}
+
+async function dbSaveRecebimento(rows, periodo) {
+  await db.from('recebimento').delete().eq('upload_ts', null).or(`data.gte.${periodo}-01`);
+  // Simpler: just upsert all by nf+codigo
+  const payload = rows.map(r => ({
+    nf: r.nf, data: r.data, codigo: r.codigo,
+    produto: r.produto, qtd: r.qtd, fornecedor: r.fornecedor
+  }));
+  for (let i = 0; i < payload.length; i += 500) {
+    const { error } = await db.from('recebimento').insert(payload.slice(i, i + 500));
+    if (error) console.error('dbSaveRecebimento error:', error);
+  }
+  await db.from('historico').insert({ tipo: 'recebimento', arquivo: periodo, registros: rows.length, periodo });
+}
+
+async function dbToggleResolvido(faltaId, resolvido) {
+  if (resolvido) {
+    await db.from('faltas').update({ resolvido: true }).eq('id', faltaId);
+  } else {
+    await db.from('faltas').update({ resolvido: false }).eq('id', faltaId);
+  }
+}
+
+// ============================================================
+// DB — LOAD FUNCTIONS (on page open, pull from Supabase)
+// ============================================================
+
+async function dbLoadAll() {
+  showDbStatus('Carregando dados do servidor...');
+  try {
+    const periodo = getPeriod();
+
+    // Load faltas
+    const { data: faltas } = await db.from('faltas').select('*').eq('periodo', periodo).order('data');
+    if (faltas && faltas.length) {
+      S.faltas = faltas.map(f => ({ ...f, id: f.id }));
+      // Sync resolved set
+      S.resolved = new Set(faltas.filter(f => f.resolvido).map(f => f.id));
+    }
+
+    // Load conferencia
+    const { data: conf } = await db.from('conferencia').select('*').eq('periodo', periodo);
+    if (conf && conf.length) S.conferencia = conf;
+
+    // Load estoque
+    const { data: est } = await db.from('estoque').select('*');
+    if (est && est.length) {
+      S.estoque = {};
+      est.forEach(e => { S.estoque[e.codigo] = { produto: e.produto, estoque: e.estoque, posicao: e.posicao }; });
+    }
+
+    // Load recebimento
+    const { data: rec } = await db.from('recebimento').select('*').order('data', { ascending: false }).limit(5000);
+    if (rec && rec.length) S.recebimento = rec;
+
+    // Load historico
+    const { data: hist } = await db.from('historico').select('*').order('ts', { ascending: false }).limit(50);
+    if (hist && hist.length) {
+      S.history = hist.map(h => ({
+        type: h.tipo, desc: `${h.tipo}: ${h.arquivo}`,
+        count: h.registros, ts: new Date(h.ts).getTime()
+      }));
+    }
+
+    // Load updates timestamps
+    const tipos = ['faltas', 'conferencia', 'estoque', 'recebimento'];
+    for (const tipo of tipos) {
+      const { data: last } = await db.from('historico').select('ts').eq('tipo', tipo).order('ts', { ascending: false }).limit(1);
+      if (last && last.length) {
+        const key = tipo === 'conferencia' ? 'conf' : tipo === 'estoque' ? 'est' : tipo === 'recebimento' ? 'rec' : 'faltas';
+        S.updates[key] = { ts: new Date(last[0].ts).getTime(), file: tipo, count: 0 };
+      }
+    }
+
+    updateSelects();
+    buildConfSelects();
+    updateStats();
+    renderStatusBar();
+    renderHistory();
+    renderFaltas();
+    renderDay();
+    renderPending();
+    hideDbStatus();
+
+    if (S.faltas.length || S.conferencia.length) {
+      // Mark upload cards as loaded
+      if (S.faltas.length) markCard('card-faltas', 'sub-faltas', `${periodo} (${S.faltas.length} reg.)`);
+      if (S.conferencia.length) markCard('card-conf', 'sub-conf', `${periodo} (${S.conferencia.length} reg.)`);
+      if (Object.keys(S.estoque).length) markCard('card-est', 'sub-est', `${Object.keys(S.estoque).length} produtos`);
+      if (S.recebimento.length) markCard('card-rec', 'sub-rec', `${S.recebimento.length} reg.`);
+      toast(`✓ Dados carregados do servidor — ${S.faltas.length} faltas`);
+    }
+  } catch(err) {
+    console.error('dbLoadAll error:', err);
+    hideDbStatus();
+    toast('⚠ Sem conexão com servidor — modo offline');
+  }
+}
+
+function showDbStatus(msg) {
+  let el = document.getElementById('db-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'db-status';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:var(--accent);color:#000;text-align:center;padding:8px;font-size:12px;font-weight:700;z-index:9999;';
+    document.body.prepend(el);
+  }
+  el.textContent = msg;
+}
+function hideDbStatus() {
+  const el = document.getElementById('db-status');
+  if (el) el.remove();
+}
+
+// Init
+document.getElementById('headerDate').textContent =
+  new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+
+renderStatusBar();
+renderHistory();
+
+// ============================================================
+// TABS
+// ============================================================
+function switchTab(tab) {
+  const TABS = ['dia','faltas','historico','conferencia','recebimento','cruzamento'];
+  document.querySelectorAll('.tab').forEach((t,i)=>{ t.classList.toggle('active', TABS[i]===tab); });
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+tab).classList.add('active');
+  if(tab==='cruzamento') renderCruz();
+  if(tab==='conferencia') renderConf();
+  if(tab==='recebimento') renderRec();
+  if(tab==='historico') renderPending();
+  if(tab==='dia') renderDay();
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function toast(msg) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'),2800);
+}
+
+// ============================================================
+// STATUS BAR
+// ============================================================
+function renderStatusBar() {
+  const sources = [
+    {id:'faltas', icon:'📋', label:'Faltas Mês'},
+    {id:'conf',   icon:'✅', label:'Conferente Mês'},
+    {id:'est',    icon:'🗄️', label:'Estoque'},
+    {id:'rec',    icon:'📦', label:'Recebimento'}
+  ];
+  sources.forEach(src => {
+    const pill = document.getElementById('pill-'+src.id);
+    const timeEl = document.getElementById('pill-'+src.id+'-time');
+    const upd = S.updates[src.id];
+    if (upd) {
+      const d = new Date(upd.ts);
+      const fmt = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+      pill.className = 'src-pill updated';
+      timeEl.textContent = 'Atualizado: ' + fmt;
+    } else {
+      pill.className = 'src-pill never';
+      timeEl.textContent = 'Pendente de atualização';
+    }
+  });
+}
+
+// ============================================================
+// HISTORY LOG
+// ============================================================
+function addHistory(type, desc, count) {
+  const entry = { type, desc, count, ts: Date.now() };
+  S.history.unshift(entry);
+  if (S.history.length > 100) S.history = S.history.slice(0, 100);
+  safeSave(KEYS.history, S.history);
+  renderHistory();
+}
+
+function renderHistory() {
+  const el = document.getElementById('history-list');
+  if (!S.history.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:16px 0;text-align:center">Nenhuma atualização registrada ainda</div>';
+    return;
+  }
+  el.innerHTML = S.history.map(h => {
+    const d = new Date(h.ts);
+    const fmt = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const icons = {faltas:'📋',conferencia:'✅',estoque:'🗄️',recebimento:'📦'};
+    return `<div class="hist-item ${h.type}">
+      <span>${icons[h.type]||'📁'}</span>
+      <span class="hist-desc">${h.desc}</span>
+      <span class="hist-badge">${h.count} registros</span>
+      <span class="hist-time">${fmt}</span>
+    </div>`;
+  }).join('');
+}
+
+function clearHistory() {
+  if (!confirm('Limpar todo o histórico de atualizações e itens pendentes?')) return;
+  S.history = []; S.firstSeen = {}; S.resolved = new Set(); S.updates = {};
+  safeSave(KEYS.history, S.history);
+  safeSave(KEYS.firstSeen, S.firstSeen);
+  safeSave(KEYS.resolved, []);
+  safeSave(KEYS.updates, S.updates);
+  renderHistory(); renderPending(); renderStatusBar(); updateStats(); toast('Histórico limpo');
+}
+
+// ============================================================
+// DAY VIEW
+// ============================================================
+let currentDayFilter = null; // { ini, fim } as dd/mm/yyyy strings
+
+function setDay(mode) {
+  document.querySelectorAll('.day-btn').forEach(b=>b.classList.remove('active'));
+  event && event.target && event.target.classList && event.target.classList.add('active');
+  S.dayMode = mode;
+  const today = new Date();
+  const fmt = d => d.toLocaleDateString('pt-BR');
+
+  if (mode === 'hoje') {
+    currentDayFilter = { ini: fmt(today), fim: fmt(today) };
+    document.getElementById('day-showing').textContent = 'Hoje, ' + fmt(today);
+  } else if (mode === 'ontem') {
+    const y = new Date(today); y.setDate(y.getDate()-1);
+    currentDayFilter = { ini: fmt(y), fim: fmt(y) };
+    document.getElementById('day-showing').textContent = 'Ontem, ' + fmt(y);
+  } else if (mode === 'semana') {
+    const w = new Date(today); w.setDate(w.getDate()-6);
+    currentDayFilter = { ini: fmt(w), fim: fmt(today) };
+    document.getElementById('day-showing').textContent = fmt(w) + ' → ' + fmt(today);
+  } else if (mode === 'custom') {
+    const val = document.getElementById('day-input').value;
+    if (!val) return;
+    const [y,m,d] = val.split('-');
+    const fmtd = `${d}/${m}/${y}`;
+    currentDayFilter = { ini: fmtd, fim: fmtd };
+    document.getElementById('day-showing').textContent = fmtd;
+  }
+  renderDay();
+}
+
+function dateInRange(dateStr, ini, fim) {
+  // dateStr is dd/mm/yyyy
+  const toNum = s => { const [d,m,y]=s.split('/'); return parseInt(y+m+d); };
+  const v = toNum(dateStr);
+  return v >= toNum(ini) && v <= toNum(fim);
+}
+
+function renderDay() {
+  if (!currentDayFilter) setDay('ontem');
+  const { ini, fim } = currentDayFilter;
+  const rows = S.faltas.filter(f => f.data && dateInRange(f.data, ini, fim));
+
+  // Stats
+  const clientes = new Set(rows.map(f=>f.cliente).filter(Boolean));
+  const prods = new Set(rows.map(f=>f.codigo).filter(Boolean));
+  const semEst = rows.filter(f=>f.estoque<=0).length;
+  const valor = rows.reduce((s,f)=>s+(f.valor||0),0);
+
+  const statsEl = document.getElementById('day-stats');
+  statsEl.innerHTML = `
+    <div class="ds-card blue"><div class="ds-label">Faltas no Período</div><div class="ds-val">${rows.length}</div></div>
+    <div class="ds-card orange"><div class="ds-label">Produtos Únicos</div><div class="ds-val">${prods.size}</div></div>
+    <div class="ds-card red"><div class="ds-label">Clientes Afetados</div><div class="ds-val">${clientes.size}</div></div>
+    <div class="ds-card yellow"><div class="ds-label">Sem Estoque</div><div class="ds-val">${semEst}</div></div>
+    <div class="ds-card green"><div class="ds-label">Valor não Faturado</div><div class="ds-val">R$ ${valor.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>`;
+
+  // Top clientes
+  const byCliente = {};
+  rows.forEach(f=>{ byCliente[f.cliente||'—']=(byCliente[f.cliente||'—']||0)+f.qtd; });
+  const topC = Object.entries(byCliente).sort((a,b)=>b[1]-a[1]).slice(0,8);
+
+  // Top produtos
+  const byProd = {};
+  rows.forEach(f=>{ byProd[f.produto||'—']=(byProd[f.produto||'—']||0)+f.qtd; });
+  const topP = Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,8);
+
+  document.getElementById('day-breakdown').innerHTML = `
+    <div class="breakdown-box">
+      <div class="bb-title">Top Clientes Afetados</div>
+      ${topC.length ? topC.map(([n,v])=>`<div class="bb-row"><span class="bb-name">${n}</span><span class="bb-val">${v} un</span></div>`).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">Nenhum dado no período</div>'}
+    </div>
+    <div class="breakdown-box">
+      <div class="bb-title">Top Produtos com Falta</div>
+      ${topP.length ? topP.map(([n,v])=>`<div class="bb-row"><span class="bb-name">${n}</span><span class="bb-val">${v} un</span></div>`).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 0">Nenhum dado no período</div>'}
+    </div>`;
+
+  document.getElementById('day-count').textContent = rows.length + ' itens';
+  const tbody = document.getElementById('tbody-day');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Carregue o PDF de Faltas':'Nenhuma falta no período selecionado'}</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(f => {
+    const est = S.estoque[f.codigo];
+    const eVal = est ? est.estoque : f.estoque;
+    const ppp = est ? est.posicao : '—';
+    const ec = eVal<=0?'red':eVal<=5?'yellow':'green';
+    return `<tr>
+      <td class="mono">${f.data}</td>
+      <td class="mono">${f.codigo||'—'}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.produto}">${f.produto||'—'}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:600">${f.qtd}</td>
+      <td class="mono"><span class="sdot sdot-${ec==='red'?'r':ec==='yellow'?'y':'g'}"></span>${eVal}</td>
+      <td class="mono" style="color:var(--muted)">${ppp||'—'}</td>
+      <td class="mono">${f.pedido||'—'}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.cliente||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// PENDING (Histórico de faltas não resolvidas)
+// ============================================================
+function renderPending() {
+  const today = Date.now();
+  const MS_DAY = 86400000;
+
+  // Group faltas by codigo
+  const byProd = {};
+  S.faltas.forEach(f => {
+    if (!f.codigo) return;
+    if (!byProd[f.codigo]) byProd[f.codigo] = { codigo:f.codigo, produto:f.produto, qtd:0, ids:[] };
+    byProd[f.codigo].qtd += f.qtd;
+    byProd[f.codigo].ids.push(f.id);
+  });
+
+  const rows = Object.values(byProd).map(p => {
+    // Check if any item from this product was resolved
+    const anyResolved = p.ids.some(id => S.resolved.has(id));
+    const firstTs = S.firstSeen[p.codigo];
+    const dias = firstTs ? Math.floor((today - firstTs) / MS_DAY) : 0;
+    const est = S.estoque[p.codigo];
+    const recs = S.recebimento.filter(r=>r.codigo===p.codigo);
+    const lastRec = recs.sort((a,b)=>b.data>a.data?1:-1)[0];
+    return { ...p, resolved:anyResolved, dias, est, lastRec };
+  }).filter(p => !p.resolved); // only unresolved
+
+  document.getElementById('pending-count').textContent = rows.length + ' itens pendentes';
+
+  const tbody = document.getElementById('tbody-pending');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">✅</div><p>Nenhuma falta pendente</p></div></td></tr>`;
+    return;
+  }
+
+  rows.sort((a,b)=>b.dias-a.dias);
+  tbody.innerHTML = rows.map(p => {
+    const firstFmt = p.dias > 0 ? new Date(S.firstSeen[p.codigo]).toLocaleDateString('pt-BR') : 'Hoje';
+    const estoqueAtual = p.est ? p.est.estoque : '—';
+    const ec = p.est===undefined?'gray':p.est.estoque<=0?'red':p.est.estoque<=5?'yellow':'green';
+    const recText = p.lastRec ? `<span class="badge badge-green">${p.lastRec.data}</span>` : '<span class="badge badge-red">Não recebeu</span>';
+    let sit = '';
+    if (p.est && p.est.estoque<=0) sit = '<span class="badge badge-red">⚠ Zerado</span>';
+    else if (!p.lastRec) sit = '<span class="badge badge-yellow">Aguardando</span>';
+    else sit = '<span class="badge badge-orange">Em andamento</span>';
+    return `<tr>
+      <td class="mono">${firstFmt}</td>
+      <td class="mono" style="color:${p.dias>=3?'var(--danger)':p.dias>=1?'var(--warn)':'var(--muted)'}">${p.dias}d</td>
+      <td class="mono">${p.codigo}</td>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.produto}">${p.produto}</td>
+      <td class="mono" style="color:var(--accent2)">${p.qtd}</td>
+      <td class="mono"><span class="badge badge-${ec}">${estoqueAtual}</span></td>
+      <td>${recText}</td>
+      <td>${sit}</td>
+      <td><button class="resolve-btn" onclick="resolveProduct('${p.codigo}')">Resolver todos</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function resolveProduct(codigo) {
+  S.faltas.filter(f=>f.codigo===codigo).forEach(f=>S.resolved.add(f.id));
+  safeSave(KEYS.resolved, [...S.resolved]);
+  updateStats(); renderPending(); toast('✓ Produto marcado como resolvido');
+}
+
+// ============================================================
+// LOADERS
+// ============================================================
+// Generic PDF text extractor using PDF.js
+async function extractPDFText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+  let fullText = '';
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+
+    // Group items by Y coordinate (rounded) to reconstruct lines
+    const lineMap = {};
+    for (const item of content.items) {
+      if (!item.str || !item.str.trim()) continue;
+      const y = Math.round(item.transform[5]);
+      if (!lineMap[y]) lineMap[y] = [];
+      lineMap[y].push({ x: item.transform[4], str: item.str });
+    }
+
+    // Sort lines top-to-bottom (descending Y in PDF coords) then left-to-right
+    const ys = Object.keys(lineMap).map(Number).sort((a, b) => b - a);
+    for (const y of ys) {
+      const tokens = lineMap[y].sort((a, b) => a.x - b.x);
+      fullText += tokens.map(t => t.str).join(' ').trim() + '\n';
+    }
+  }
+
+  return fullText;
+}
+
+function loadFaltasPDF(input) {
+  const file = input.files[0]; if (!file) return;
+  markCard('card-faltas','sub-faltas','Lendo PDF...');
+  extractPDFText(file).then(async text => {
+    const parsed = parseFaltas(text);
+    S.faltas = parsed;
+    const now = Date.now();
+    const periodo = getPeriod();
+    // firstSeen local cache
+    const newFS = {...S.firstSeen};
+    parsed.forEach(f => { if(f.codigo && !newFS[f.codigo]) newFS[f.codigo]=now; });
+    S.firstSeen = newFS;
+    safeSave(KEYS.firstSeen, S.firstSeen);
+    S.updates.faltas = { ts:now, file:file.name, count:parsed.length };
+    safeSave(KEYS.updates, S.updates);
+    addHistory('faltas', `Faltas: ${file.name}`, parsed.length);
+    markCard('card-faltas','sub-faltas',file.name);
+    updateSelects(); updateStats(); renderStatusBar();
+    renderFaltas(); renderDay(); renderPending();
+    toast('✓ Faltas: ' + parsed.length + ' registros — salvando no servidor...');
+    // Save to Supabase
+    try {
+      await dbSaveFaltas(parsed, periodo);
+      toast('✓ Faltas salvas no servidor!');
+    } catch(e) { console.error(e); toast('⚠ Salvo localmente — erro no servidor'); }
+  }).catch(err => {
+    toast('❌ Erro ao ler PDF: ' + err.message);
+    console.error(err);
+  });
+}
+
+function loadConfPDF(input) {
+  const file = input.files[0]; if (!file) return;
+  markCard('card-conf','sub-conf','Lendo PDF...');
+  extractPDFText(file).then(async text => {
+    S.conferencia = parseConf(text);
+    const now = Date.now();
+    const periodo = getPeriod();
+    S.updates.conf = { ts:now, file:file.name, count:S.conferencia.length };
+    safeSave(KEYS.updates, S.updates);
+    addHistory('conferencia', `Conferência: ${file.name}`, S.conferencia.length);
+    markCard('card-conf','sub-conf',file.name);
+    buildConfSelects(); updateStats(); renderStatusBar(); renderConf();
+    toast('✓ Conferência: ' + S.conferencia.length + ' registros — salvando...');
+    try {
+      await dbSaveConferencia(S.conferencia, periodo);
+      toast('✓ Conferência salva no servidor!');
+    } catch(e) { console.error(e); toast('⚠ Salvo localmente — erro no servidor'); }
+  }).catch(err => {
+    toast('❌ Erro ao ler PDF: ' + err.message);
+    console.error(err);
+  });
+}
+
+function loadEstoque(input) {
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = XLSX.read(e.target.result,{type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws,{defval:''});
+    S.estoque = {};
+    let count = 0;
+    data.forEach(row => {
+      const cod = String(row['CPRO']||row['cpro']||'').trim();
+      if(!cod || cod==='CPRO') return;
+      S.estoque[cod] = {
+        produto: row['PRODUTO']||row['produto']||'',
+        estoque: parseFloat(row['Estoque']||row['estoque']||0),
+        posicao: row['PPP']||row['ppp']||''
+      };
+      count++;
+    });
+    const now = Date.now();
+    S.updates.est = { ts:now, file:file.name, count };
+    safeSave(KEYS.updates, S.updates);
+    addHistory('estoque', `Estoque: ${file.name}`, count);
+    markCard('card-est','sub-est',file.name);
+    updateStats(); renderStatusBar(); renderFaltas(); renderDay();
+    toast('✓ Estoque: ' + count + ' produtos — salvando...');
+    dbSaveEstoque(Object.entries(S.estoque)).then(()=>toast('✓ Estoque salvo no servidor!')).catch(e=>console.error(e));
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function loadRecebimento(input) {
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = XLSX.read(e.target.result,{type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    S.recebimento = [];
+    for(let i=2;i<data.length;i++){
+      const row=data[i];
+      if(!row[3]) continue;
+      let dataE='';
+      if(row[2]){
+        if(typeof row[2]==='number'){
+          const d=XLSX.SSF.parse_date_code(row[2]);
+          dataE=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
+        } else dataE=String(row[2]);
+      }
+      S.recebimento.push({
+        nf:String(row[1]||''), data:dataE,
+        codigo:String(row[3]||'').trim(),
+        produto:String(row[5]||''),
+        qtd:parseFloat(row[6])||0,
+        fornecedor:String(row[10]||''),
+        id:Math.random().toString(36).substr(2,9)
+      });
+    }
+    const now = Date.now();
+    S.updates.rec = { ts:now, file:file.name, count:S.recebimento.length };
+    safeSave(KEYS.updates, S.updates);
+    addHistory('recebimento', `Recebimento: ${file.name}`, S.recebimento.length);
+    markCard('card-rec','sub-rec',file.name);
+    updateStats(); renderStatusBar(); renderRec(); renderFaltas();
+    const _per=getPeriod();
+    toast('✓ Recebimento: ' + S.recebimento.length + ' registros — salvando...');
+    dbSaveRecebimento(S.recebimento,_per).then(()=>toast('✓ Recebimento salvo no servidor!')).catch(e=>console.error(e));
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ============================================================
+// PARSERS
+// ============================================================
+function parseFaltas(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = [];
+  let cod = '', nome = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i];
+
+    // Product header: "Produto: 0169 - CADEADO LATAO PADO 20MM"
+    // PDF.js may split across tokens, so also check concatenated
+    const pm = t.match(/Produto:\s*(\d+)\s*[-–]\s*(.+)/i);
+    if (pm) { cod = pm[1].trim(); nome = pm[2].trim(); continue; }
+
+    // Skip totals, headers, footers
+    if (/^TOTAL\b/i.test(t) || /^Manager of Decision/i.test(t) || /^Relat/i.test(t) || /^DATA\b/.test(t) || /^Faltas/i.test(t) || /^Periodo/i.test(t)) continue;
+
+    // Data row: starts with dd/mm/yyyy
+    const dm = t.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+/);
+    if (!dm || !cod) continue;
+
+    const data = dm[1];
+    const qtd = parseInt(dm[2]);
+
+    // Extract pedido number like "412.560/01"
+    const pedM = t.match(/(\d{3}\.\d{3}\/\d{2})/);
+    const pedido = pedM ? pedM[1] : '';
+
+    // Extract all numbers to get valor and estoque
+    const allNums = t.match(/-?\d+[,.]?\d*/g) || [];
+    // valor is usually a decimal like 86,54
+    const valorM = t.match(/\b(\d{1,6}[,.]\d{2})\b/);
+    const valor = valorM ? parseFloat(valorM[1].replace(',','.')) : 0;
+
+    // Estoque: number just before REP (usually a short integer after pedido+cliente)
+    // Try to find it as the number right before the rep name
+    const afterPed = pedido ? t.substring(t.indexOf(pedido) + pedido.length) : t;
+    const estoqueM = afterPed.match(/\s+(-?\d+)\s+[A-Z]/);
+    const estoque = estoqueM ? parseInt(estoqueM[1]) : 0;
+
+    // Cliente: text right after pedido, up to ~25 chars
+    let cliente = '';
+    if (pedido) {
+      const idx = t.indexOf(pedido) + pedido.length;
+      cliente = t.substring(idx, idx + 25).trim().replace(/\s+/g, ' ');
+    }
+
+    // Televenda: last token(s)
+    const semTV = t.includes('SEM TELEVENDA');
+    const tvM = t.match(/(SUPER\s+\w+|\w+)\s*$/);
+    const televenda = semTV ? 'SEM TELEVENDA' : (tvM ? tvM[1] : '');
+
+    // Rep: token before televenda
+    const repM = t.match(/([A-Z][A-Z\s]+?)\s+(SEM TELEVENDA|SUPER\s+\w+|\w+)\s*$/);
+    const rep = repM ? repM[1].trim() : '';
+
+    rows.push({
+      data, qtd, produto: nome, codigo: cod,
+      valor, pedido, cliente, estoque, rep, televenda,
+      id: Math.random().toString(36).substr(2, 9)
+    });
+  }
+  return rows;
+}
+
+function parseConf(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = [];
+  let conf = '';
+
+  for (const line of lines) {
+    const t = line;
+
+    // Conferente header
+    const cm = t.match(/^Conferente:\s*(.+)/i);
+    if (cm) { conf = cm[1].trim(); continue; }
+
+    // Skip headers/footers
+    if (/^Manager of Decision/i.test(t) || /^Relat/i.test(t) || /^PEDIDO/i.test(t) || /^Report/i.test(t)) continue;
+
+    // Data row: contains a pedido number and a time
+    const pedM = t.match(/(\d{3}\.\d{3}\/\d{2})/);
+    const timeM = t.match(/(\d{2}\/\d{2})\s+(\d{2}:\d{2})/);
+    if (!pedM || !conf) continue;
+
+    const allNums = t.match(/\d+/g) || [];
+    const tempoM = (t.match(/\d{2}:\d{2}:\d{2}/g) || []);
+
+    // Date from something like "15/05 02:57" or inline in line
+    const dateM = t.match(/(\d{2}\/\d{2})/);
+    const date = dateM ? dateM[1] : '';
+
+    // Separador: last ALL-CAPS word(s) at end
+    const sepM = t.match(/([A-ZÁÉÍÓÚÀÈÌÒÙÃÕ][A-ZÁÉÍÓÚÀÈÌÒÙÃÕ\s]{2,})\s*$/);
+    const separador = sepM ? sepM[1].trim() : '';
+
+    // Cliente: text after pedido
+    const pidx = t.indexOf(pedM[1]);
+    const cliente = t.substring(pidx + pedM[1].length, pidx + pedM[1].length + 30).trim();
+
+    rows.push({
+      data: date,
+      hora_ini: timeM ? timeM[2] : '',
+      pedido: pedM[1],
+      cliente,
+      conferente: conf,
+      separador,
+      itens: parseInt(allNums[allNums.length - 6]) || 0,
+      disp: parseInt(allNums[allNums.length - 5]) || 0,
+      vol: parseInt(allNums[allNums.length - 4]) || 0,
+      tempo: tempoM[0] || '',
+      id: Math.random().toString(36).substr(2, 9)
+    });
+  }
+  return rows;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function markCard(cardId, subId, name) {
+  document.getElementById(cardId).classList.add('loaded');
+  const sub=document.getElementById(subId);
+  sub.textContent='✓ '+name; sub.className='upload-sub ok';
+}
+
+function updateSelects() {
+  const reps=[...new Set(S.faltas.map(f=>f.rep).filter(Boolean))].sort();
+  const tvs=[...new Set(S.faltas.map(f=>f.televenda).filter(Boolean))].sort();
+  document.getElementById('f-rep').innerHTML='<option value="">Todos Reps</option>'+reps.map(r=>`<option>${r}</option>`).join('');
+  document.getElementById('f-tv').innerHTML='<option value="">Todos Televendas</option>'+tvs.map(t=>`<option>${t}</option>`).join('');
+}
+
+function buildConfSelects() {
+  const confs=[...new Set(S.conferencia.map(c=>c.conferente).filter(Boolean))].sort();
+  const seps=[...new Set(S.conferencia.map(c=>c.separador).filter(Boolean))].sort();
+  document.getElementById('cf-conf').innerHTML='<option value="">Todos Conferentes</option>'+confs.map(c=>`<option>${c}</option>`).join('');
+  document.getElementById('cf-sep').innerHTML='<option value="">Todos Separadores</option>'+seps.map(s=>`<option>${s}</option>`).join('');
+}
+
+function updateStats() {
+  document.getElementById('st-faltas').textContent=S.faltas.length||'—';
+  document.getElementById('st-prods').textContent=new Set(S.faltas.map(f=>f.codigo)).size||'—';
+  document.getElementById('st-zero').textContent=S.faltas.filter(f=>f.estoque<=0).length||'—';
+  document.getElementById('st-rec').textContent=S.recebimento.length||'—';
+  document.getElementById('st-resolvidos').textContent=S.resolved.size||0;
+}
+
+function paginate(data,page,size){ return data.slice((page-1)*size, page*size); }
+
+function renderPag(containerId, total, page, size, fn) {
+  const pages=Math.ceil(total/size);
+  const el=document.getElementById(containerId);
+  if(pages<=1){el.innerHTML='';return;}
+  let html='';
+  html+=`<button class="page-btn" onclick="${fn}(${Math.max(1,page-1)})">‹</button>`;
+  for(let p=Math.max(1,page-2);p<=Math.min(pages,page+2);p++)
+    html+=`<button class="page-btn ${p===page?'active':''}" onclick="${fn}(${p})">${p}</button>`;
+  html+=`<button class="page-btn" onclick="${fn}(${Math.min(pages,page+1)})">›</button>`;
+  html+=`<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:8px">${total} itens · p.${page}/${pages}</span>`;
+  el.innerHTML=html;
+}
+
+function recebeuProd(codigo){ return S.recebimento.find(r=>r.codigo===codigo); }
+
+// ============================================================
+// RENDER FALTAS
+// ============================================================
+let fFiltered = [];
+
+function sortF(key) {
+  if(S.sortKey===key) S.sortDir*=-1; else{S.sortKey=key;S.sortDir=1;}
+  renderFaltas();
+}
+function goF(p){S.pages.faltas=p;renderFaltas();}
+
+function renderFaltas() {
+  const busca=document.getElementById('f-busca').value.toLowerCase();
+  const rep=document.getElementById('f-rep').value;
+  const tv=document.getElementById('f-tv').value;
+  const status=document.getElementById('f-status').value;
+  const dIni=document.getElementById('f-data-ini').value;
+  const dFim=document.getElementById('f-data-fim').value;
+
+  fFiltered=S.faltas.filter(f=>{
+    const m=!busca||(f.produto||'').toLowerCase().includes(busca)||(f.pedido||'').toLowerCase().includes(busca)||(f.cliente||'').toLowerCase().includes(busca)||(f.codigo||'').includes(busca);
+    const rm=!rep||f.rep===rep;
+    const tm=!tv||f.televenda===tv;
+    const sm=!status||(status==='resolvido'&&S.resolved.has(f.id))||(status==='pendente'&&!S.resolved.has(f.id))||(status==='sem_estoque'&&f.estoque<=0);
+    let dm=true;
+    if(dIni){const[y,mo,d]=dIni.split('-');const fi=`${d}/${mo}/${y}`;dm=dm&&(!f.data||f.data>=fi);}
+    if(dFim){const[y,mo,d]=dFim.split('-');const ff=`${d}/${mo}/${y}`;dm=dm&&(!f.data||f.data<=ff);}
+    return m&&rm&&tm&&sm&&dm;
+  });
+
+  fFiltered.sort((a,b)=>{
+    let av=a[S.sortKey]||'', bv=b[S.sortKey]||'';
+    if(['qtd','estoque'].includes(S.sortKey)){av=+av;bv=+bv;}
+    return av>bv?S.sortDir:av<bv?-S.sortDir:0;
+  });
+
+  document.getElementById('faltas-count').textContent=fFiltered.length+' itens';
+  const page=S.pages.faltas;
+  const pageData=paginate(fFiltered,page,S.PAGE);
+  const tbody=document.getElementById('tbody-faltas');
+
+  if(!fFiltered.length){
+    tbody.innerHTML=`<tr><td colspan="11"><div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Faça upload do PDF de Faltas':'Nenhuma falta encontrada'}</p></div></td></tr>`;
+    document.getElementById('card-list-faltas').innerHTML=`<div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Faça upload do PDF de Faltas':'Nenhuma falta encontrada'}</p></div>`;
+    document.getElementById('pag-faltas').innerHTML=''; return;
+  }
+
+  tbody.innerHTML=pageData.map(f=>{
+    const res=S.resolved.has(f.id);
+    const est=S.estoque[f.codigo];
+    const eVal=est?est.estoque:f.estoque;
+    const ppp=est?est.posicao:'—';
+    const ec=eVal<=0?'r':eVal<=5?'y':'g';
+    const rec=recebeuProd(f.codigo);
+    const cd = S.confData[f.id] || {};
+    const confPor = cd.conferidoPor || '';
+    const qtdFis = cd.qtdFisico !== undefined ? cd.qtdFisico : '';
+    return `<tr>
+      <td class="mono">${f.data||'—'}</td>
+      <td class="mono">${f.codigo||'—'}</td>
+      <td style="max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f.produto}">${f.produto||'—'}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:600">${f.qtd}</td>
+      <td class="mono"><span class="sdot sdot-${ec}"></span>${eVal}</td>
+      <td class="mono" style="color:var(--muted)">${ppp||'—'}</td>
+      <td class="mono">${f.pedido||'—'}</td>
+      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.cliente||'—'}</td>
+      <td>${rec?`<span class="badge badge-green">✓ ${rec.data}</span>`:'<span class="badge badge-gray">Não</span>'}</td>
+      <td style="background:rgba(74,158,255,.04)">
+        <input class="conf-input ${confPor?'filled':''}" type="text"
+          placeholder="Nome..."
+          value="${confPor}"
+          onchange="saveConfData('${f.id}','conferidoPor',this.value)"
+          oninput="this.classList.toggle('filled',this.value.length>0)">
+      </td>
+      <td style="background:rgba(74,158,255,.04)">
+        <input class="conf-input ${qtdFis!==''?'filled':''}" type="number"
+          placeholder="0"
+          value="${qtdFis}"
+          min="0"
+          onchange="saveConfData('${f.id}','qtdFisico',this.value)"
+          oninput="this.classList.toggle('filled',this.value.length>0)">
+      </td>
+      <td><button class="resolve-btn ${res?'resolved':''}" onclick="toggleRes('${f.id}')">${res?'✓ OK':'Resolver'}</button></td>
+    </tr>`;
+  }).join('');
+
+  // Mobile cards
+  const cardList = document.getElementById('card-list-faltas');
+  cardList.innerHTML = pageData.map(f => {
+    const res = S.resolved.has(f.id);
+    const est = S.estoque[f.codigo];
+    const eVal = est ? est.estoque : f.estoque;
+    const ppp = est ? est.posicao : '';
+    const ec = eVal <= 0 ? 'est-zero' : eVal <= 5 ? 'est-low' : 'est-ok';
+    const rec = recebeuProd(f.codigo);
+    return `<div class="falta-card ${ec}">
+      <div class="fc-top">
+        <div class="fc-produto">${f.produto || '—'}</div>
+        <div class="fc-qtd">${f.qtd}</div>
+      </div>
+      <div class="fc-meta">
+        <span class="fc-tag badge badge-gray">${f.data || '—'}</span>
+        <span class="fc-tag badge badge-gray">Cód: ${f.codigo || '—'}</span>
+        <span class="fc-tag badge badge-${eVal<=0?'red':eVal<=5?'yellow':'green'}">Est: ${eVal}</span>
+        ${ppp ? `<span class="fc-tag badge badge-gray">📍 ${ppp}</span>` : ''}
+        ${rec ? `<span class="fc-tag badge badge-green">✓ Recebeu</span>` : ''}
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">
+        📦 ${f.pedido || '—'} · ${f.cliente || '—'}
+      </div>
+      <div class="fc-bot">
+        <span class="fc-info" style="color:var(--muted)">${ppp||''}</span>
+        <button class="resolve-btn ${res?'resolved':''}" onclick="toggleRes('${f.id}')">${res?'✓ OK':'Resolver'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  renderPag('pag-faltas',fFiltered.length,page,S.PAGE,'goF');
+}
+
+function toggleRes(id){
+  if(S.resolved.has(id)) { S.resolved.delete(id); dbToggleResolvido(id, false); }
+  else { S.resolved.add(id); dbToggleResolvido(id, true); }
+  safeSave(KEYS.resolved,[...S.resolved]);
+  updateStats(); renderFaltas();
+}
+
+// ============================================================
+// RENDER CONFERÊNCIA
+// ============================================================
+function goC(p){S.pages.conf=p;renderConf();}
+function renderConf(){
+  const busca=document.getElementById('cf-busca').value.toLowerCase();
+  const conf=document.getElementById('cf-conf').value;
+  const sep=document.getElementById('cf-sep').value;
+  const filtered=S.conferencia.filter(c=>{
+    const m=!busca||(c.pedido||'').toLowerCase().includes(busca)||(c.cliente||'').toLowerCase().includes(busca)||(c.conferente||'').toLowerCase().includes(busca);
+    return m&&(!conf||c.conferente===conf)&&(!sep||c.separador===sep);
+  });
+  document.getElementById('conf-count').textContent=filtered.length+' itens';
+
+  const byC={};
+  S.conferencia.forEach(c=>{ if(!byC[c.conferente]) byC[c.conferente]={pedidos:0,itens:0}; byC[c.conferente].pedidos++;byC[c.conferente].itens+=c.itens; });
+  const byS={};
+  S.conferencia.forEach(c=>{ if(!c.separador) return; if(!byS[c.separador]) byS[c.separador]=0; byS[c.separador]++; });
+
+  document.getElementById('conf-summary').innerHTML = S.conferencia.length ? `
+    <div class="conf-card"><h3>Por Conferente</h3>
+      ${Object.entries(byC).sort((a,b)=>b[1].pedidos-a[1].pedidos).slice(0,8).map(([n,d])=>
+        `<div class="conf-item"><div><div class="conf-name">${n}</div><div class="conf-meta">${d.itens} itens</div></div><div class="conf-stat">${d.pedidos} ped.</div></div>`).join('')}
+    </div>
+    <div class="conf-card"><h3>Por Separador</h3>
+      ${Object.entries(byS).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([n,v])=>
+        `<div class="conf-item"><div class="conf-name">${n}</div><div class="conf-stat">${v} ped.</div></div>`).join('')}
+    </div>` : '';
+
+  const page=S.pages.conf;
+  const pd=paginate(filtered,page,S.PAGE);
+  const tbody=document.getElementById('tbody-conf');
+  if(!filtered.length){ tbody.innerHTML=`<tr><td colspan="8"><div class="empty"><div class="empty-icon">📭</div><p>${S.conferencia.length===0?'Faça upload do PDF de Conferência':'Nenhum registro'}</p></div></td></tr>`; return; }
+  tbody.innerHTML=pd.map(c=>`<tr>
+    <td class="mono">${c.data||'—'}</td>
+    <td class="mono">${c.pedido||'—'}</td>
+    <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.cliente||'—'}</td>
+    <td><span class="badge badge-blue">${c.conferente||'—'}</span></td>
+    <td>${c.separador?`<span class="badge badge-orange">${c.separador}</span>`:'—'}</td>
+    <td class="mono">${c.itens||0}</td>
+    <td class="mono">${c.vol||0}</td>
+    <td class="mono">${c.tempo||'—'}</td>
+  </tr>`).join('');
+  renderPag('pag-conf',filtered.length,page,S.PAGE,'goC');
+}
+
+// ============================================================
+// RENDER RECEBIMENTO
+// ============================================================
+function goR(p){S.pages.rec=p;renderRec();}
+function renderRec(){
+  const busca=document.getElementById('r-busca').value.toLowerCase();
+  const data=document.getElementById('r-data').value;
+  const filtered=S.recebimento.filter(r=>{
+    const m=!busca||(r.produto||'').toLowerCase().includes(busca)||(r.codigo||'').includes(busca);
+    let dm=true;
+    if(data){ const[y,mo,d]=data.split('-'); const fmtd=`${d}/${mo}/${y}`; dm=r.data===fmtd; }
+    return m&&dm;
+  });
+  document.getElementById('rec-count').textContent=filtered.length+' itens';
+  const page=S.pages.rec;
+  const pd=paginate(filtered,page,S.PAGE);
+  const tbody=document.getElementById('tbody-rec');
+  if(!filtered.length){ tbody.innerHTML=`<tr><td colspan="6"><div class="empty"><div class="empty-icon">📦</div><p>${S.recebimento.length===0?'Faça upload da planilha de Recebimento':'Nenhum registro'}</p></div></td></tr>`; return; }
+  tbody.innerHTML=pd.map(r=>`<tr>
+    <td class="mono rec-highlight">${r.data||'—'}</td>
+    <td class="mono">${r.codigo||'—'}</td>
+    <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.produto||'—'}</td>
+    <td class="mono" style="color:var(--accent3);font-weight:700">${r.qtd}</td>
+    <td>${r.fornecedor||'—'}</td>
+    <td class="mono">${r.nf||'—'}</td>
+  </tr>`).join('');
+  renderPag('pag-rec',filtered.length,page,S.PAGE,'goR');
+}
+
+// ============================================================
+// RENDER CRUZAMENTO — investigador por produto + data
+// ============================================================
+let cruzFiltered = []; // flat rows for export
+
+function renderCruz() {
+  const busca = document.getElementById('x-busca').value.trim().toLowerCase();
+  const dataFiltro = document.getElementById('x-data').value; // yyyy-mm-dd
+
+  const resultsEl = document.getElementById('cruz-results');
+  const tableWrap = document.getElementById('cruz-table-wrap');
+
+  // Need at least faltas loaded
+  if (!S.faltas.length) {
+    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">🔗</div><p>Carregue o PDF de Faltas e o PDF de Conferência para usar o cruzamento.</p></div>`;
+    tableWrap.style.display = 'none';
+    return;
+  }
+
+  // If nothing typed yet, show prompt
+  if (!busca && !dataFiltro) {
+    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">🔍</div><p>Digite um código ou nome de produto acima para investigar.<br><span style="font-size:10px">Ex: <strong>3340</strong> ou <strong>CADEADO</strong></span></p></div>`;
+    tableWrap.style.display = 'none';
+    return;
+  }
+
+  // 1. Filter faltas by search + date
+  let faltasFiltradas = S.faltas.filter(f => {
+    const matchBusca = !busca ||
+      (f.codigo || '').toLowerCase().includes(busca) ||
+      (f.produto || '').toLowerCase().includes(busca);
+
+    let matchData = true;
+    if (dataFiltro) {
+      const [y, m, d] = dataFiltro.split('-');
+      const dataFmt = `${d}/${m}/${y}`;
+      matchData = f.data === dataFmt;
+    }
+    return matchBusca && matchData;
+  });
+
+  if (!faltasFiltradas.length) {
+    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">📭</div><p>Nenhuma falta encontrada para esse filtro.</p></div>`;
+    tableWrap.style.display = 'none';
+    cruzFiltered = [];
+    document.getElementById('cruz-count').textContent = '0 linhas';
+    return;
+  }
+
+  // 2. Build lookup: pedido → conferência record
+  const confByPedido = {};
+  S.conferencia.forEach(c => {
+    if (c.pedido) confByPedido[c.pedido] = c;
+  });
+
+  // 3. Enrich faltas with conferente/separador via pedido match
+  const enriched = faltasFiltradas.map(f => {
+    const conf = confByPedido[f.pedido] || null;
+    const est = S.estoque[f.codigo];
+    const rec = S.recebimento.find(r => r.codigo === f.codigo);
+    return {
+      ...f,
+      conferente: conf ? conf.conferente : '—',
+      separador:  conf ? conf.separador  : '—',
+      estoqueAtual: est ? est.estoque : f.estoque,
+      posicao: est ? est.posicao : '',
+      recebeu: rec ? rec.data : null,
+    };
+  });
+
+  cruzFiltered = enriched;
+
+  // 4. Group by produto/codigo for card view
+  const byProd = {};
+  enriched.forEach(r => {
+    const key = r.codigo || r.produto;
+    if (!byProd[key]) byProd[key] = { codigo: r.codigo, produto: r.produto, rows: [] };
+    byProd[key].rows.push(r);
+  });
+
+  // 5. Render product cards
+  resultsEl.innerHTML = Object.values(byProd).map(p => {
+    const totalQtd = p.rows.reduce((s, r) => s + r.qtd, 0);
+    const est = S.estoque[p.codigo];
+    const estoqueAtual = est ? est.estoque : (p.rows[0]?.estoque ?? '—');
+    const ec = estoqueAtual <= 0 ? 'red' : estoqueAtual <= 5 ? 'yellow' : 'green';
+
+    // Unique conferentes with count
+    const confMap = {};
+    p.rows.forEach(r => {
+      if (r.conferente && r.conferente !== '—')
+        confMap[r.conferente] = (confMap[r.conferente] || 0) + 1;
+    });
+    const sepMap = {};
+    p.rows.forEach(r => {
+      if (r.separador && r.separador !== '—')
+        sepMap[r.separador] = (sepMap[r.separador] || 0) + 1;
+    });
+
+    const confPills = Object.entries(confMap).length
+      ? Object.entries(confMap).map(([n, c]) =>
+          `<div class="person-pill conf">✅ ${n} <span class="pill-count">${c}x</span></div>`).join('')
+      : '<span style="color:var(--muted);font-size:11px">Não encontrado na conferência</span>';
+
+    const sepPills = Object.entries(sepMap).length
+      ? Object.entries(sepMap).map(([n, c]) =>
+          `<div class="person-pill sep">📦 ${n} <span class="pill-count">${c}x</span></div>`).join('')
+      : '<span style="color:var(--muted);font-size:11px">Não encontrado</span>';
+
+    // Pedidos table rows
+    const pedRows = p.rows.map(r => {
+      const recBadge = r.recebeu
+        ? `<span class="badge badge-green">✓ ${r.recebeu}</span>`
+        : '<span class="badge badge-gray">Não</span>';
+      const confColor = r.conferente !== '—' ? 'var(--accent)' : 'var(--muted)';
+      const sepColor  = r.separador  !== '—' ? 'var(--accent2)' : 'var(--muted)';
+      return `<tr>
+        <td class="mono">${r.data || '—'}</td>
+        <td class="mono">${r.pedido || '—'}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente || '—'}</td>
+        <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
+        <td style="font-weight:600;color:${confColor}">${r.conferente}</td>
+        <td style="font-weight:600;color:${sepColor}">${r.separador}</td>
+        <td>${recBadge}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+    <div class="cruz-prod-card">
+      <div class="cruz-prod-header">
+        <div class="cruz-prod-code">${p.codigo || '—'}</div>
+        <div class="cruz-prod-name">${p.produto || '—'}</div>
+        <div class="cruz-prod-stats">
+          <span class="badge badge-${ec}">Est: ${estoqueAtual}</span>
+          <span class="badge badge-orange">${totalQtd} un faltou</span>
+          <span class="badge badge-gray">${p.rows.length} pedido${p.rows.length>1?'s':''}</span>
+        </div>
+      </div>
+
+      <div class="person-section">
+        <div class="person-label">✅ Conferentes responsáveis</div>
+        <div class="person-pills">${confPills}</div>
+      </div>
+
+      <div class="person-section">
+        <div class="person-label">📦 Separadores responsáveis</div>
+        <div class="person-pills">${sepPills}</div>
+      </div>
+
+      <div class="person-section" style="padding:0;">
+        <div style="overflow-x:auto;">
+          <table class="cruz-pedidos">
+            <thead><tr>
+              <th>Data</th><th>N° Pedido</th><th>Cliente</th>
+              <th>Qtd Falta</th><th>Conferente</th><th>Separador</th><th>Recebeu?</th>
+            </tr></thead>
+            <tbody>${pedRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 6. Also populate summary table
+  tableWrap.style.display = 'block';
+  document.getElementById('cruz-count').textContent = enriched.length + ' linhas';
+  document.getElementById('tbody-cruz').innerHTML = enriched.map(r => {
+    const ec = r.estoqueAtual <= 0 ? 'red' : r.estoqueAtual <= 5 ? 'yellow' : 'green';
+    const recBadge = r.recebeu
+      ? `<span class="badge badge-green">✓ ${r.recebeu}</span>`
+      : '<span class="badge badge-gray">Não</span>';
+    return `<tr>
+      <td class="mono">${r.data||'—'}</td>
+      <td class="mono">${r.codigo||'—'}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.produto||'—'}</td>
+      <td class="mono">${r.pedido||'—'}</td>
+      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente||'—'}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
+      <td style="color:${r.conferente!=='—'?'var(--accent)':'var(--muted)'};font-weight:600">${r.conferente}</td>
+      <td style="color:${r.separador!=='—'?'var(--accent2)':'var(--muted)'};font-weight:600">${r.separador}</td>
+      <td class="mono"><span class="badge badge-${ec}">${r.estoqueAtual}</span></td>
+      <td>${recBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+function exportCruz() {
+  if (!cruzFiltered.length) { toast('Faça uma busca primeiro'); return; }
+  const rows = cruzFiltered.map(r => ({
+    'Data': r.data, 'Código': r.codigo, 'Produto': r.produto,
+    'N° Pedido': r.pedido, 'Cliente': r.cliente, 'Qtd Falta': r.qtd,
+    'Conferente': r.conferente, 'Separador': r.separador,
+    'Estoque': r.estoqueAtual, 'Recebeu': r.recebeu || 'Não'
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Cruzamento');
+  XLSX.writeFile(wb, `cruzamento_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('✓ Excel exportado!');
+}
+
+// ============================================================
+// CONFERÊNCIA MANUAL — salvar, exportar, limpar
+// ============================================================
+function saveConfData(id, campo, valor) {
+  if (!S.confData[id]) S.confData[id] = {};
+  S.confData[id][campo] = campo === 'qtdFisico' ? (valor === '' ? '' : parseFloat(valor)) : valor;
+  safeSave(KEYS.confData, S.confData);
+}
+
+function exportConferencia() {
+  const data = fFiltered.length ? fFiltered : S.faltas;
+  if (!data.length) { toast('Nenhum dado para exportar'); return; }
+
+  const rows = data.map(f => {
+    const est = S.estoque[f.codigo];
+    const eVal = est ? est.estoque : f.estoque;
+    const ppp = est ? est.posicao : '';
+    const rec = recebeuProd(f.codigo);
+    const cd = S.confData[f.id] || {};
+    return {
+      'Data':          f.data || '',
+      'Código':        f.codigo || '',
+      'Produto':       f.produto || '',
+      'Qtd Falta':     f.qtd || 0,
+      'Estoque Sist.': eVal,
+      'Posição (PPP)': ppp || '',
+      'N° Pedido':     f.pedido || '',
+      'Cliente':       f.cliente || '',
+      'Recebeu?':      rec ? `Sim (${rec.data})` : 'Não',
+      'Conferido por': cd.conferidoPor || '',
+      'Qtd Físico':    cd.qtdFisico !== undefined && cd.qtdFisico !== '' ? cd.qtdFisico : '',
+      'Diferença':     (cd.qtdFisico !== undefined && cd.qtdFisico !== '')
+                         ? (parseFloat(cd.qtdFisico) - (f.qtd || 0))
+                         : '',
+      'Status':        S.resolved.has(f.id) ? 'Resolvido' : 'Pendente'
+    };
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Column widths
+  ws['!cols'] = [
+    {wch:11},{wch:8},{wch:40},{wch:10},{wch:12},{wch:12},
+    {wch:13},{wch:28},{wch:14},{wch:20},{wch:10},{wch:10},{wch:8}
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Conferência');
+  const fname = `conferencia_faltas_${new Date().toISOString().slice(0,10)}.xlsx`;
+  XLSX.writeFile(wb, fname);
+
+  // Also trigger print after a short delay
+  setTimeout(() => {
+    if (confirm('Deseja imprimir a tabela agora?')) window.print();
+  }, 800);
+
+  toast('✓ Excel de conferência exportado!');
+}
+
+function limparConferencia() {
+  if (!confirm('Limpar todos os campos "Conferido por" e "Qtd Físico"?')) return;
+  S.confData = {};
+  safeSave(KEYS.confData, S.confData);
+  renderFaltas();
+  toast('✓ Campos de conferência limpos');
+}
+function exportFaltas(){
+  if(!fFiltered.length){toast('Nenhum dado para exportar');return;}
+  const rows=fFiltered.map(f=>{
+    const est=S.estoque[f.codigo];
+    const ppp=est?est.posicao:'';
+    const eVal=est?est.estoque:f.estoque;
+    const rec=recebeuProd(f.codigo);
+    return {
+      'Data':f.data,'Código':f.codigo,'Produto':f.produto,
+      'Qtd Falta':f.qtd,'Estoque':eVal,'Posição (PPP)':ppp,
+      'N° Pedido':f.pedido,'Cliente':f.cliente,
+      'Recebeu':rec?rec.data:'Não',
+      'Status':S.resolved.has(f.id)?'Resolvido':'Pendente'
+    };
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Faltas');
+  XLSX.writeFile(wb,`faltas_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('✓ Excel exportado!');
+}
+
+// Init: load from Supabase first, fallback to local
+setDay('ontem');
+dbLoadAll();
+</script>
+</body>
+</html>
