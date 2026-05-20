@@ -1432,7 +1432,7 @@ function renderDay() {
     return;
   }
   tbody.innerHTML = rows.map(f => {
-    const est = S.estoque[f.codigo];
+    const est = getEstoque(f.codigo);
     const eVal = est ? est.estoque : f.estoque;
     const ppp = est ? est.posicao : '—';
     const ec = eVal<=0?'red':eVal<=5?'yellow':'green';
@@ -1470,7 +1470,7 @@ function renderPending() {
     const anyResolved = p.ids.some(id => S.resolved.has(id));
     const firstTs = S.firstSeen[p.codigo];
     const dias = firstTs ? Math.floor((today - firstTs) / MS_DAY) : 0;
-    const est = S.estoque[p.codigo];
+    const est = getEstoque(p.codigo);
     const recs = S.recebimento.filter(r=>r.codigo===p.codigo);
     const lastRec = recs.sort((a,b)=>b.data>a.data?1:-1)[0];
     return { ...p, resolved:anyResolved, dias, est, lastRec };
@@ -1608,26 +1608,63 @@ function loadEstoque(input) {
   reader.onload = e => {
     const wb = XLSX.read(e.target.result,{type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(ws,{defval:''});
+
+    // Lê como array de arrays para ter controle total das colunas
+    const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+    // Linha 1 (índice 0) = cabeçalhos
+    // Linha 2 (índice 1) = vazia (linha em branco do sistema)
+    // Linha 3+ (índice 2+) = dados
+    const header = raw[0].map(h => String(h).trim().toUpperCase());
+
+    // Descobre índices pelos nomes das colunas (mais robusto)
+    const iCod  = header.indexOf('CPRO');
+    const iProd = header.indexOf('PRODUTO');
+    const iEst  = header.indexOf('ESTOQUE');
+    const iPPP  = header.indexOf('PPP');
+
+    // Fallback para posições fixas conhecidas se não achar pelo nome
+    const colCod  = iCod  >= 0 ? iCod  : 2;
+    const colProd = iProd >= 0 ? iProd : 4;
+    const colEst  = iEst  >= 0 ? iEst  : 7;
+    const colPPP  = iPPP  >= 0 ? iPPP  : 11;
+
     S.estoque = {};
     let count = 0;
-    data.forEach(row => {
-      const cod = String(row['CPRO']||row['cpro']||'').trim();
-      if(!cod || cod==='CPRO') return;
-      S.estoque[cod] = {
-        produto: row['PRODUTO']||row['produto']||'',
-        estoque: parseFloat(row['Estoque']||row['estoque']||0),
-        posicao: row['PPP']||row['ppp']||''
-      };
+
+    // Começa do índice 2 para pular cabeçalho + linha vazia
+    for (let i = 2; i < raw.length; i++) {
+      const row = raw[i];
+      const cod = String(row[colCod] || '').trim();
+      if (!cod || cod === 'CPRO' || cod === '') continue;
+
+      // Remove código numérico com .0 (ex: "4408.0" → "4408")
+      const codLimpo = cod.replace(/\.0$/, '');
+
+      const posicao = String(row[colPPP] || '').trim();
+      const produto = String(row[colProd] || '').trim();
+      const estoqueVal = parseFloat(row[colEst]) || 0;
+
+      S.estoque[codLimpo] = { produto, estoque: estoqueVal, posicao };
+
+      // Também salva com o código original caso tenha variação
+      if (codLimpo !== cod) S.estoque[cod] = S.estoque[codLimpo];
+
       count++;
-    });
+    }
+
+    // Log para debug — mostra 3 primeiros itens no console
+    const sample = Object.entries(S.estoque).slice(0,3);
+    console.log('Estoque carregado — amostra:', sample);
+    console.log(`Colunas detectadas: CPRO[${colCod}] PRODUTO[${colProd}] ESTOQUE[${colEst}] PPP[${colPPP}]`);
+
     const now = Date.now();
     S.updates.est = { ts:now, file:file.name, count };
     safeSave(KEYS.updates, S.updates);
     addHistory('estoque', `Estoque: ${file.name}`, count);
     markCard('card-est','sub-est',file.name);
     updateStats(); renderStatusBar(); renderFaltas(); renderDay();
-    toast('✓ Estoque: ' + count + ' produtos — salvando...');
+    toast(`✓ Estoque: ${count} produtos (PPP col.${colPPP+1}) — salvando...`);
     dbSaveEstoque(Object.entries(S.estoque)).then(()=>toast('✓ Estoque salvo no servidor!')).catch(e=>console.error(e));
   };
   reader.readAsArrayBuffer(file);
@@ -1840,6 +1877,23 @@ function renderPag(containerId, total, page, size, fn) {
 
 function recebeuProd(codigo){ return S.recebimento.find(r=>r.codigo===codigo); }
 
+// Lookup de estoque normalizando código (remove zeros à esquerda e .0)
+function getEstoque(codigo) {
+  if (!codigo) return null;
+  // Tenta direto
+  if (S.estoque[codigo]) return S.estoque[codigo];
+  // Remove zeros à esquerda: "0173" → "173"
+  const semZero = String(codigo).replace(/^0+/, '');
+  if (S.estoque[semZero]) return S.estoque[semZero];
+  // Remove .0 no final: "4408.0" → "4408"
+  const semPonto = String(codigo).replace(/\.0$/, '');
+  if (S.estoque[semPonto]) return S.estoque[semPonto];
+  // Tenta com zero à esquerda: "173" → "0173"
+  const comZero = String(codigo).padStart(4, '0');
+  if (S.estoque[comZero]) return S.estoque[comZero];
+  return null;
+}
+
 // ============================================================
 // RENDER FALTAS
 // ============================================================
@@ -1889,7 +1943,7 @@ function renderFaltas() {
 
   tbody.innerHTML=pageData.map(f=>{
     const res=S.resolved.has(f.id);
-    const est=S.estoque[f.codigo];
+    const est=getEstoque(f.codigo);
     const eVal=est?est.estoque:f.estoque;
     const ppp=est?est.posicao:'—';
     const ec=eVal<=0?'r':eVal<=5?'y':'g';
@@ -1930,7 +1984,7 @@ function renderFaltas() {
   const cardList = document.getElementById('card-list-faltas');
   cardList.innerHTML = pageData.map(f => {
     const res = S.resolved.has(f.id);
-    const est = S.estoque[f.codigo];
+    const est = getEstoque(f.codigo);
     const eVal = est ? est.estoque : f.estoque;
     const ppp = est ? est.posicao : '';
     const ec = eVal <= 0 ? 'est-zero' : eVal <= 5 ? 'est-low' : 'est-ok';
@@ -2159,7 +2213,7 @@ function renderCruz() {
   const faltas = faltasNoPeriodo();
   const enriched = faltas.map(f => {
     const conf = confByPedido[f.pedido] || null;
-    const est = S.estoque[f.codigo];
+    const est = getEstoque(f.codigo);
     return {
       ...f,
       conferente: conf ? conf.conferente : '—',
@@ -2302,7 +2356,7 @@ function renderCruz() {
 
   resultsEl.innerHTML = Object.values(byProd).map(p => {
     const totalQtd = p.rows.reduce((s,r)=>s+r.qtd,0);
-    const est = S.estoque[p.codigo];
+    const est = getEstoque(p.codigo);
     const eVal = est ? est.estoque : (p.rows[0]?.estoqueAtual??'—');
     const ec = eVal<=0?'red':eVal<=5?'yellow':'green';
 
@@ -2468,7 +2522,7 @@ function exportConferencia() {
   if (!data.length) { toast('Nenhum dado para exportar'); return; }
 
   const rows = data.map(f => {
-    const est = S.estoque[f.codigo];
+    const est = getEstoque(f.codigo);
     const eVal = est ? est.estoque : f.estoque;
     const ppp = est ? est.posicao : '';
     const rec = recebeuProd(f.codigo);
@@ -2523,7 +2577,7 @@ function limparConferencia() {
 function exportFaltas(){
   if(!fFiltered.length){toast('Nenhum dado para exportar');return;}
   const rows=fFiltered.map(f=>{
-    const est=S.estoque[f.codigo];
+    const est=getEstoque(f.codigo);
     const ppp=est?est.posicao:'';
     const eVal=est?est.estoque:f.estoque;
     const rec=recebeuProd(f.codigo);
@@ -2629,7 +2683,7 @@ function renderDiretoria() {
 
   const enriched = faltas.map(f => {
     const conf = confByPedido[f.pedido] || null;
-    const est  = S.estoque[f.codigo];
+    const est  = getEstoque(f.codigo);
     return {
       ...f,
       conferente:   conf ? conf.conferente : '—',
@@ -2807,7 +2861,7 @@ function exportDiretoria() {
 
   const rows = faltas.map(f => {
     const conf = confByPedido[f.pedido]||null;
-    const est  = S.estoque[f.codigo];
+    const est  = getEstoque(f.codigo);
     return {
       'Data': f.data, 'Código': f.codigo, 'Produto': f.produto,
       'Qtd Falta': f.qtd, 'Valor (R$)': f.valor||0,
