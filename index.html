@@ -478,7 +478,7 @@ select.filter-input{cursor:pointer;}
   .stats-row, .filters, .pagination,
   .card-list, .btn, .resolve-btn,
   #panel-dia, #panel-historico, #panel-conferencia,
-  #panel-recebimento, #panel-cruzamento { display: none !important; }
+  #panel-recebimento, #panel-cruzamento, #panel-diretoria { display: none !important; }
   body { background: white !important; color: black !important; }
   .panel#panel-faltas { display: block !important; }
   .table-wrap { border: 1px solid #ccc !important; }
@@ -521,6 +521,59 @@ select.filter-input{cursor:pointer;}
 .turno-badge.manha { background: rgba(255,184,48,.15); color: var(--warn); }
 .turno-badge.tarde { background: rgba(74,158,255,.15); color: var(--accent); }
 .turno-badge.noite { background: rgba(155,89,182,.15); color: #9b59b6; }
+/* ===========================
+   DIRETORIA — LOCK + DASHBOARD
+=========================== */
+#dir-lock {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 60vh;
+}
+.dir-lock-box {
+  background: var(--surface); border: 1px solid var(--warn);
+  border-radius: 16px; padding: 40px 36px; text-align: center;
+  max-width: 360px; width: 100%;
+  box-shadow: 0 0 40px rgba(255,184,48,.1);
+}
+.dir-lock-icon { font-size: 48px; margin-bottom: 12px; }
+.dir-lock-title {
+  font-size: 18px; font-weight: 700; color: var(--warn);
+  text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;
+}
+.dir-lock-sub { font-size: 12px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+.dir-senha-input {
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 8px; padding: 12px 16px;
+  font-size: 14px; width: 100%; outline: none; text-align: center;
+  letter-spacing: 4px; transition: border .2s;
+}
+.dir-senha-input:focus { border-color: var(--warn); }
+
+/* KPI cards */
+.dir-kpis {
+  display: grid; grid-template-columns: repeat(2,1fr);
+  gap: 10px; margin-bottom: 14px;
+}
+.dir-kpi {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 20px;
+  border-left: 4px solid var(--border);
+}
+.dir-kpi.blue  { border-left-color: var(--accent); }
+.dir-kpi.red   { border-left-color: var(--danger); }
+.dir-kpi.green { border-left-color: var(--accent3); }
+.dir-kpi.yellow{ border-left-color: var(--warn); }
+.dir-kpi.purple{ border-left-color: #9b59b6; }
+.dir-kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+.dir-kpi-val   { font-family: var(--mono); font-size: 32px; font-weight: 700; }
+.dir-kpi.blue   .dir-kpi-val { color: var(--accent); }
+.dir-kpi.red    .dir-kpi-val { color: var(--danger); }
+.dir-kpi.green  .dir-kpi-val { color: var(--accent3); }
+.dir-kpi.yellow .dir-kpi-val { color: var(--warn); }
+.dir-kpi.purple .dir-kpi-val { color: #9b59b6; }
+.dir-kpi-sub { font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+@media(min-width:600px){ .dir-kpis{ grid-template-columns: repeat(3,1fr); } }
+@media(min-width:900px){ .dir-kpis{ grid-template-columns: repeat(5,1fr); } }
 </style>
 </head>
 <body>
@@ -584,6 +637,7 @@ select.filter-input{cursor:pointer;}
   <button class="tab" onclick="switchTab('historico')">🕐 Histórico</button>
   <button class="tab" onclick="switchTab('recebimento')">📦 Recebimento</button>
   <button class="tab" onclick="switchTab('cruzamento')">🎯 Responsabilidade</button>
+  <button class="tab" onclick="switchTab('diretoria')" style="color:var(--warn);border-bottom:2px solid transparent;">🔒 Diretoria</button>
 </div>
 
 <div class="main">
@@ -870,6 +924,124 @@ select.filter-input{cursor:pointer;}
     </div>
   </div>
 
+  <!-- ===== DIRETORIA ===== -->
+  <div class="panel" id="panel-diretoria">
+
+    <!-- LOCK SCREEN -->
+    <div id="dir-lock">
+      <div class="dir-lock-box">
+        <div class="dir-lock-icon">🔒</div>
+        <div class="dir-lock-title">Acesso Restrito</div>
+        <div class="dir-lock-sub">Esta área é exclusiva para a diretoria.<br>Digite a senha para continuar.</div>
+        <input type="password" id="dir-senha" class="dir-senha-input" placeholder="Senha..."
+          onkeydown="if(event.key==='Enter') checkSenha()">
+        <button class="btn btn-primary" style="width:100%;margin-top:10px" onclick="checkSenha()">Entrar</button>
+        <div id="dir-erro" style="color:var(--danger);font-size:11px;margin-top:8px;display:none">Senha incorreta</div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD DIRETORIA (visível só após senha) -->
+    <div id="dir-content" style="display:none">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:var(--text)">📊 Dashboard Executivo</div>
+          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="dir-periodo-label"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary btn-sm" onclick="setDirPeriod('mes')">Mês atual</button>
+          <button class="btn btn-primary btn-sm" onclick="setDirPeriod('semana')">Última semana</button>
+          <input class="filter-input" type="date" id="dir-ini" onchange="renderDiretoria()">
+          <input class="filter-input" type="date" id="dir-fim" onchange="renderDiretoria()">
+          <button class="btn btn-export btn-sm" onclick="exportDiretoria()">⬇ Relatório Excel</button>
+          <button class="btn btn-danger btn-sm" onclick="lockDiretoria()">🔒 Sair</button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="dir-kpis" id="dir-kpis"></div>
+
+      <!-- LINHA 1: Valor por dia + Turno -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">📅 Faltas por Dia</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>Data</th><th>Qtd Faltas</th><th>Produtos</th><th>Valor Est. (R$)</th></tr></thead>
+              <tbody id="dir-tbody-dias"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">🌓 Faltas por Turno</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>Turno</th><th>Faltas</th><th>%</th><th>Conferentes</th></tr></thead>
+              <tbody id="dir-tbody-turnos"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- LINHA 2: Top produtos + Top conferentes -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">⚠️ Top 10 Produtos Críticos</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>Produto</th><th>Faltas</th><th>Estoque</th><th>Posição</th></tr></thead>
+              <tbody id="dir-tbody-prods"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">👤 Top Conferentes com Faltas</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>Conferente</th><th>Turno</th><th>Faltas</th><th>%</th></tr></thead>
+              <tbody id="dir-tbody-confs"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- LINHA 3: Top separadores + Itens zerados -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">📦 Top Separadores com Faltas</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>Separador</th><th>Turno</th><th>Faltas</th><th>%</th></tr></thead>
+              <tbody id="dir-tbody-seps"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-header-row">
+            <span class="table-title">🔴 Itens com Estoque Zerado</span>
+          </div>
+          <div class="scroll-wrap">
+            <table class="tbl">
+              <thead><tr><th>Código</th><th>Produto</th><th>Posição</th><th>Qtd Faltou</th></tr></thead>
+              <tbody id="dir-tbody-zeros"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 <div class="toast" id="toast"></div>
 
@@ -1087,7 +1259,7 @@ renderHistory();
 // TABS
 // ============================================================
 function switchTab(tab) {
-  const TABS = ['dia','faltas','historico','recebimento','cruzamento'];
+  const TABS = ['dia','faltas','historico','recebimento','cruzamento','diretoria'];
   document.querySelectorAll('.tab').forEach((t,i)=>{ t.classList.toggle('active', TABS[i]===tab); });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+tab).classList.add('active');
@@ -1095,6 +1267,7 @@ function switchTab(tab) {
   if(tab==='recebimento') renderRec();
   if(tab==='historico') renderPending();
   if(tab==='dia') renderDay();
+  if(tab==='diretoria') initDiretoria();
 }
 
 // ============================================================
@@ -2347,7 +2520,284 @@ function exportFaltas(){
   toast('✓ Excel exportado!');
 }
 
-// Init: load from Supabase first, fallback to local
+// ============================================================
+// DIRETORIA — SENHA + DASHBOARD EXECUTIVO
+// ============================================================
+
+// ⚠️ ALTERE AQUI A SENHA DA DIRETORIA
+const DIR_SENHA = 'faltas2026';
+
+let dirUnlocked = false;
+
+function initDiretoria() {
+  if (dirUnlocked) {
+    renderDiretoria();
+    return;
+  }
+  document.getElementById('dir-lock').style.display    = 'flex';
+  document.getElementById('dir-content').style.display = 'none';
+  setTimeout(() => document.getElementById('dir-senha').focus(), 100);
+}
+
+function checkSenha() {
+  const input = document.getElementById('dir-senha').value;
+  const erro  = document.getElementById('dir-erro');
+  if (input === DIR_SENHA) {
+    dirUnlocked = true;
+    document.getElementById('dir-lock').style.display    = 'none';
+    document.getElementById('dir-content').style.display = 'block';
+    document.getElementById('dir-senha').value = '';
+    erro.style.display = 'none';
+    // Set default period
+    setDirPeriod('mes');
+  } else {
+    erro.style.display = 'block';
+    document.getElementById('dir-senha').value = '';
+    document.getElementById('dir-senha').focus();
+    setTimeout(() => { erro.style.display='none'; }, 3000);
+  }
+}
+
+function lockDiretoria() {
+  dirUnlocked = false;
+  document.getElementById('dir-lock').style.display    = 'flex';
+  document.getElementById('dir-content').style.display = 'none';
+  switchTab('dia');
+}
+
+function setDirPeriod(mode) {
+  const today = new Date();
+  const fmt   = d => d.toISOString().slice(0,10);
+  if (mode === 'mes') {
+    document.getElementById('dir-ini').value = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+    document.getElementById('dir-fim').value = fmt(today);
+  } else if (mode === 'semana') {
+    const w = new Date(today); w.setDate(w.getDate()-6);
+    document.getElementById('dir-ini').value = fmt(w);
+    document.getElementById('dir-fim').value = fmt(today);
+  }
+  renderDiretoria();
+}
+
+function getDirFaltas() {
+  const ini = document.getElementById('dir-ini').value;
+  const fim = document.getElementById('dir-fim').value;
+  return S.faltas.filter(f => {
+    let ok = true;
+    if (ini) { const [y,m,d]=ini.split('-'); ok = ok && f.data >= `${d}/${m}/${y}`; }
+    if (fim) { const [y,m,d]=fim.split('-'); ok = ok && f.data <= `${d}/${m}/${y}`; }
+    return ok;
+  });
+}
+
+function renderDiretoria() {
+  if (!dirUnlocked) return;
+
+  const faltas = getDirFaltas();
+  const ini    = document.getElementById('dir-ini').value;
+  const fim    = document.getElementById('dir-fim').value;
+
+  // Período label
+  const fmtBR = s => { if(!s) return ''; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; };
+  document.getElementById('dir-periodo-label').textContent =
+    `Período: ${fmtBR(ini)} → ${fmtBR(fim)} · ${faltas.length} registros`;
+
+  // Conf lookup
+  const confByPedido = {};
+  S.conferencia.forEach(c => { if(c.pedido) confByPedido[c.pedido]=c; });
+
+  const enriched = faltas.map(f => {
+    const conf = confByPedido[f.pedido] || null;
+    const est  = S.estoque[f.codigo];
+    return {
+      ...f,
+      conferente:   conf ? conf.conferente : '—',
+      separador:    conf ? conf.separador  : '—',
+      turnoCon:     conf ? getTurno(conf.conferente) : 'desconhecido',
+      turnoSep:     conf ? getTurno(conf.separador)  : 'desconhecido',
+      estoqueAtual: est  ? est.estoque : f.estoque,
+      posicao:      est  ? est.posicao : '',
+    };
+  });
+
+  const total       = enriched.length;
+  const totalValor  = enriched.reduce((s,f) => s + (f.valor||0), 0);
+  const semEstoque  = enriched.filter(f => f.estoqueAtual <= 0).length;
+  const prodUnicos  = new Set(enriched.map(f=>f.codigo)).size;
+  const resolvidos  = enriched.filter(f=>S.resolved.has(f.id)).length;
+
+  // ── KPIs ──
+  document.getElementById('dir-kpis').innerHTML = `
+    <div class="dir-kpi blue">
+      <div class="dir-kpi-label">Total de Faltas</div>
+      <div class="dir-kpi-val">${total.toLocaleString('pt-BR')}</div>
+      <div class="dir-kpi-sub">registros no período</div>
+    </div>
+    <div class="dir-kpi red">
+      <div class="dir-kpi-label">Produtos Únicos</div>
+      <div class="dir-kpi-val">${prodUnicos}</div>
+      <div class="dir-kpi-sub">SKUs afetados</div>
+    </div>
+    <div class="dir-kpi yellow">
+      <div class="dir-kpi-label">Estoque Zerado</div>
+      <div class="dir-kpi-val">${semEstoque}</div>
+      <div class="dir-kpi-sub">itens críticos</div>
+    </div>
+    <div class="dir-kpi green">
+      <div class="dir-kpi-label">Resolvidos</div>
+      <div class="dir-kpi-val">${resolvidos}</div>
+      <div class="dir-kpi-sub">${total ? ((resolvidos/total)*100).toFixed(0) : 0}% do total</div>
+    </div>
+    <div class="dir-kpi purple">
+      <div class="dir-kpi-label">Valor Estimado</div>
+      <div class="dir-kpi-val" style="font-size:22px">R$ ${totalValor.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+      <div class="dir-kpi-sub">não faturado no período</div>
+    </div>`;
+
+  // ── FALTAS POR DIA ──
+  const byDia = {};
+  enriched.forEach(f => {
+    if (!byDia[f.data]) byDia[f.data] = { faltas:0, prods:new Set(), valor:0 };
+    byDia[f.data].faltas++;
+    byDia[f.data].prods.add(f.codigo);
+    byDia[f.data].valor += f.valor||0;
+  });
+  const diasOrdenados = Object.entries(byDia).sort((a,b)=>b[0]>a[0]?1:-1);
+  document.getElementById('dir-tbody-dias').innerHTML = diasOrdenados.map(([data, d]) =>
+    `<tr>
+      <td class="mono">${data}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${d.faltas}</td>
+      <td class="mono">${d.prods.size}</td>
+      <td class="mono" style="color:var(--accent3)">R$ ${d.valor.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+    </tr>`).join('');
+
+  // ── FALTAS POR TURNO ──
+  const byTurno = { manha:0, tarde:0, noite:0 };
+  const confsPorTurno = { manha: new Set(), tarde: new Set(), noite: new Set() };
+  enriched.forEach(f => {
+    if (byTurno[f.turnoCon] !== undefined) {
+      byTurno[f.turnoCon]++;
+      if (f.conferente !== '—') confsPorTurno[f.turnoCon].add(f.conferente);
+    }
+  });
+  const turnoColors = { manha:'var(--warn)', tarde:'var(--accent)', noite:'#9b59b6' };
+  document.getElementById('dir-tbody-turnos').innerHTML = Object.entries(byTurno)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([t,cnt]) => {
+      const pct = total ? ((cnt/total)*100).toFixed(1) : 0;
+      return `<tr>
+        <td><span class="turno-badge ${t}">${TURNO_LABEL[t]||t}</span></td>
+        <td class="mono" style="color:${turnoColors[t]};font-weight:700">${cnt}</td>
+        <td class="mono">${pct}%</td>
+        <td style="font-size:10px;color:var(--muted)">${[...confsPorTurno[t]].join(', ')||'—'}</td>
+      </tr>`;
+    }).join('');
+
+  // ── TOP 10 PRODUTOS ──
+  const byProd = {};
+  enriched.forEach(f => {
+    if (!byProd[f.codigo]) byProd[f.codigo] = { codigo:f.codigo, produto:f.produto, faltas:0, est:f.estoqueAtual, pos:f.posicao };
+    byProd[f.codigo].faltas++;
+  });
+  const topProds = Object.values(byProd).sort((a,b)=>b.faltas-a.faltas).slice(0,10);
+  document.getElementById('dir-tbody-prods').innerHTML = topProds.map((p,i) => {
+    const ec = p.est<=0?'red':p.est<=5?'yellow':'green';
+    return `<tr>
+      <td class="mono" style="color:var(--muted)">${i+1}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.produto}">${p.produto}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${p.faltas}</td>
+      <td><span class="badge badge-${ec}">${p.est}</span></td>
+      <td class="mono" style="color:var(--muted)">${p.pos||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  // ── TOP CONFERENTES ──
+  const byConf = {};
+  enriched.forEach(f => {
+    if (!byConf[f.conferente]) byConf[f.conferente]={nome:f.conferente,turno:f.turnoCon,faltas:0};
+    byConf[f.conferente].faltas++;
+  });
+  const topConfs = Object.values(byConf).sort((a,b)=>b.faltas-a.faltas).slice(0,10);
+  document.getElementById('dir-tbody-confs').innerHTML = topConfs.map((c,i) => {
+    const pct = total ? ((c.faltas/total)*100).toFixed(1) : 0;
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1;
+    const tb = c.turno!=='desconhecido'?`<span class="turno-badge ${c.turno}">${c.turno}</span>`:'—';
+    return `<tr>
+      <td>${medal}</td>
+      <td style="font-weight:600">${c.nome}</td>
+      <td>${tb}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${c.faltas}</td>
+      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+    </tr>`;
+  }).join('');
+
+  // ── TOP SEPARADORES ──
+  const bySep = {};
+  enriched.forEach(f => {
+    if (!bySep[f.separador]) bySep[f.separador]={nome:f.separador,turno:f.turnoSep,faltas:0};
+    bySep[f.separador].faltas++;
+  });
+  const topSeps = Object.values(bySep).sort((a,b)=>b.faltas-a.faltas).slice(0,10);
+  document.getElementById('dir-tbody-seps').innerHTML = topSeps.map((s,i) => {
+    const pct = total ? ((s.faltas/total)*100).toFixed(1) : 0;
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1;
+    const tb = s.turno!=='desconhecido'?`<span class="turno-badge ${s.turno}">${s.turno}</span>`:'—';
+    return `<tr>
+      <td>${medal}</td>
+      <td style="font-weight:600">${s.nome}</td>
+      <td>${tb}</td>
+      <td class="mono" style="color:var(--accent3);font-weight:700">${s.faltas}</td>
+      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+    </tr>`;
+  }).join('');
+
+  // ── ITENS ZERADOS ──
+  const zeros = enriched.filter(f=>f.estoqueAtual<=0);
+  const zerosUnicos = {};
+  zeros.forEach(f => {
+    if (!zerosUnicos[f.codigo]) zerosUnicos[f.codigo]={codigo:f.codigo,produto:f.produto,posicao:f.posicao,qtd:0};
+    zerosUnicos[f.codigo].qtd += f.qtd;
+  });
+  const zerosArr = Object.values(zerosUnicos).sort((a,b)=>b.qtd-a.qtd);
+  document.getElementById('dir-tbody-zeros').innerHTML = zerosArr.length
+    ? zerosArr.map(z=>`<tr>
+        <td class="mono">${z.codigo}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${z.produto}</td>
+        <td class="mono" style="color:var(--muted)">${z.posicao||'—'}</td>
+        <td class="mono" style="color:var(--danger);font-weight:700">${z.qtd}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="4" style="text-align:center;color:var(--accent3);padding:20px">✓ Nenhum item zerado no período</td></tr>`;
+}
+
+function exportDiretoria() {
+  const faltas = getDirFaltas();
+  if (!faltas.length) { toast('Nenhum dado para exportar'); return; }
+
+  const confByPedido = {};
+  S.conferencia.forEach(c => { if(c.pedido) confByPedido[c.pedido]=c; });
+
+  const rows = faltas.map(f => {
+    const conf = confByPedido[f.pedido]||null;
+    const est  = S.estoque[f.codigo];
+    return {
+      'Data': f.data, 'Código': f.codigo, 'Produto': f.produto,
+      'Qtd Falta': f.qtd, 'Valor (R$)': f.valor||0,
+      'Estoque': est?est.estoque:f.estoque,
+      'Posição': est?est.posicao:'',
+      'N° Pedido': f.pedido, 'Cliente': f.cliente,
+      'Conferente': conf?conf.conferente:'—',
+      'Turno Conf.': conf?getTurno(conf.conferente):'—',
+      'Separador': conf?conf.separador:'—',
+      'Turno Sep.': conf?getTurno(conf.separador):'—',
+      'Status': S.resolved.has(f.id)?'Resolvido':'Pendente'
+    };
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Relatório Executivo');
+  XLSX.writeFile(wb, `relatorio_diretoria_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('✓ Relatório exportado!');
+}
 setDay('ontem');
 // Set default period for responsabilidade tab (current month)
 const _today = new Date();
