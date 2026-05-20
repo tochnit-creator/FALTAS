@@ -2076,6 +2076,14 @@ const TURNO_MAP = {
   'MARIA D':         'tarde',
   'JOSEMAR':         'noite',
   'LUCAS VIEIRA':    'tarde',
+  // Novos colaboradores
+  'DOUGLAS FACCIO':  'manha',
+  'MARTA':           'manha',
+  'BEATRIZ S':       'tarde',
+  'DEVANIR':         'manha',
+  'MARCELO MARIANO': 'manha',
+  'JEFFERSON':       'noite',
+  'ERIVANCLEIDE':    'manha',
 };
 
 const TURNO_LABEL = { manha: '☀️ Manhã', tarde: '🌤 Tarde', noite: '🌙 Noite' };
@@ -2164,9 +2172,14 @@ function renderCruz() {
 
   const totalFaltas = enriched.length;
 
-  // ── TURNOS (por conferente) ──
+  // Para ranking de responsabilidade: só conta itens que TINHAM estoque
+  // (se não tinha estoque, não é falha do conferente/separador)
+  const enrichedComEstoque = enriched.filter(f => f.estoqueAtual > 0);
+  const totalComEstoque = enrichedComEstoque.length;
+
+  // ── TURNOS (só itens com estoque — responsabilidade real) ──
   const turnoCounts = { manha: 0, tarde: 0, noite: 0 };
-  enriched.forEach(r => {
+  enrichedComEstoque.forEach(r => {
     if (turnoCounts[r.turnoCon] !== undefined) turnoCounts[r.turnoCon]++;
   });
   const maxTurno = Math.max(...Object.values(turnoCounts), 1);
@@ -2179,20 +2192,20 @@ function renderCruz() {
 
   document.getElementById('rsp-turnos').innerHTML = ['manha','tarde','noite'].map(t => {
     const cnt = turnoCounts[t];
-    const pct = totalFaltas ? ((cnt/totalFaltas)*100).toFixed(1) : 0;
+    const pct = totalComEstoque ? ((cnt/totalComEstoque)*100).toFixed(1) : 0;
     const barW = maxTurno ? Math.round((cnt/maxTurno)*100) : 0;
     return `<div class="turno-card ${t}">
       <div class="turno-title">${TURNO_LABEL[t]}</div>
       <div class="turno-val">${cnt}</div>
-      <div class="turno-pct">${pct}% das faltas</div>
+      <div class="turno-pct">${pct}% das faltas com estoque</div>
       <div class="turno-bar-wrap"><div class="turno-bar" style="width:${barW}%"></div></div>
       <div class="turno-pessoas">${pessoasPorTurno[t].join(' · ')}</div>
     </div>`;
   }).join('');
 
-  // ── RANKING CONFERENTES ──
+  // ── RANKING CONFERENTES (só com estoque) ──
   const byConf = {};
-  enriched.forEach(r => {
+  enrichedComEstoque.forEach(r => {
     const k = r.conferente;
     if (!byConf[k]) byConf[k] = { nome: k, turno: r.turnoCon, faltas: 0, pedidos: new Set() };
     byConf[k].faltas++;
@@ -2203,28 +2216,28 @@ function renderCruz() {
     if(b.nome==='—') return -1;
     return b.faltas-a.faltas;
   });
-  const maxConf = rankConf[0]?.faltas || 1;
+  const maxConf = rankConf.filter(r=>r.nome!=='—')[0]?.faltas || 1;
 
-  document.getElementById('rsp-conf-count').textContent = rankConf.length + ' pessoas';
+  document.getElementById('rsp-conf-count').textContent = rankConf.filter(r=>r.nome!=='—').length + ' pessoas';
   document.getElementById('tbody-rsp-conf').innerHTML = rankConf.map((r,i) => {
-    const pct = totalFaltas ? ((r.faltas/totalFaltas)*100).toFixed(1) : 0;
-    const barW = Math.round((r.faltas/maxConf)*100);
+    const pct = totalComEstoque ? ((r.faltas/totalComEstoque)*100).toFixed(1) : 0;
+    const barW = r.nome!=='—' ? Math.round((r.faltas/maxConf)*100) : 0;
     const tb = r.turno !== 'desconhecido' ? `<span class="turno-badge ${r.turno}">${r.turno}</span>` : '—';
-    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    const medal = r.nome==='—'?'·':i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
     return `<tr>
       <td style="font-weight:600">${medal} ${r.nome}</td>
       <td>${tb}</td>
       <td class="mono" style="color:var(--accent2);font-weight:700">${r.faltas}
         <div class="rank-bar-wrap"><div class="rank-bar" style="width:${barW}%"></div></div>
       </td>
-      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+      <td class="mono" style="color:${r.nome!=='—'&&parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
       <td class="mono">${r.pedidos.size}</td>
     </tr>`;
   }).join('');
 
-  // ── RANKING SEPARADORES ──
+  // ── RANKING SEPARADORES (só com estoque) ──
   const bySep = {};
-  enriched.forEach(r => {
+  enrichedComEstoque.forEach(r => {
     const k = r.separador;
     if (!bySep[k]) bySep[k] = { nome: k, turno: r.turnoSep, faltas: 0, pedidos: new Set() };
     bySep[k].faltas++;
@@ -2235,21 +2248,21 @@ function renderCruz() {
     if(b.nome==='—') return -1;
     return b.faltas-a.faltas;
   });
-  const maxSep = rankSep[0]?.faltas || 1;
+  const maxSep = rankSep.filter(r=>r.nome!=='—')[0]?.faltas || 1;
 
-  document.getElementById('rsp-sep-count').textContent = rankSep.length + ' pessoas';
+  document.getElementById('rsp-sep-count').textContent = rankSep.filter(r=>r.nome!=='—').length + ' pessoas';
   document.getElementById('tbody-rsp-sep').innerHTML = rankSep.map((r,i) => {
-    const pct = totalFaltas ? ((r.faltas/totalFaltas)*100).toFixed(1) : 0;
-    const barW = Math.round((r.faltas/maxSep)*100);
+    const pct = totalComEstoque ? ((r.faltas/totalComEstoque)*100).toFixed(1) : 0;
+    const barW = r.nome!=='—' ? Math.round((r.faltas/maxSep)*100) : 0;
     const tb = r.turno !== 'desconhecido' ? `<span class="turno-badge ${r.turno}">${r.turno}</span>` : '—';
-    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    const medal = r.nome==='—'?'·':i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
     return `<tr>
       <td style="font-weight:600">${medal} ${r.nome}</td>
       <td>${tb}</td>
       <td class="mono" style="color:var(--accent2);font-weight:700">${r.faltas}
         <div class="rank-bar-wrap"><div class="rank-bar" style="width:${barW}%;background:var(--accent3)"></div></div>
       </td>
-      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+      <td class="mono" style="color:${r.nome!=='—'&&parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
       <td class="mono">${r.pedidos.size}</td>
     </tr>`;
   }).join('');
@@ -2719,9 +2732,9 @@ function renderDiretoria() {
     </tr>`;
   }).join('');
 
-  // ── TOP CONFERENTES ──
+  // ── TOP CONFERENTES (só com estoque — responsabilidade real) ──
   const byConf = {};
-  enriched.forEach(f => {
+  enriched.filter(f=>f.estoqueAtual>0).forEach(f => {
     if (!byConf[f.conferente]) byConf[f.conferente]={nome:f.conferente,turno:f.turnoCon,faltas:0};
     byConf[f.conferente].faltas++;
   });
@@ -2743,9 +2756,9 @@ function renderDiretoria() {
     </tr>`;
   }).join('');
 
-  // ── TOP SEPARADORES ──
+  // ── TOP SEPARADORES (só com estoque — responsabilidade real) ──
   const bySep = {};
-  enriched.forEach(f => {
+  enriched.filter(f=>f.estoqueAtual>0).forEach(f => {
     if (!bySep[f.separador]) bySep[f.separador]={nome:f.separador,turno:f.turnoSep,faltas:0};
     bySep[f.separador].faltas++;
   });
