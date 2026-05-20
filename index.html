@@ -1290,8 +1290,7 @@ async function dbLoadAll() {
     // Load faltas
     const { data: faltas } = await db.from('faltas').select('*').eq('periodo', periodo).order('data');
     if (faltas && faltas.length) {
-      S.faltas = faltas.map(f => ({ ...f, id: f.id }));
-      // Sync resolved set
+      S.faltas = faltas.map(f => ({ ...f, id: f.id, data: normDate(f.data) }));
       S.resolved = new Set(faltas.filter(f => f.resolvido).map(f => f.id));
     }
 
@@ -1500,11 +1499,35 @@ function setDay(mode) {
   renderDay();
 }
 
+// Normaliza qualquer formato de data para dd/mm/yyyy
+function normDate(d) {
+  if (!d) return '';
+  const s = String(d).trim();
+  // Já está no formato dd/mm/yyyy
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+  // yyyy-mm-dd (ISO)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const [y,m,dd] = s.substring(0,10).split('-');
+    return `${dd}/${m}/${y}`;
+  }
+  // dd/mm/yy
+  if (/^\d{2}\/\d{2}\/\d{2}$/.test(s)) {
+    const [dd,m,y] = s.split('/');
+    return `${dd}/${m}/20${y}`;
+  }
+  return s;
+}
+
 function dateInRange(dateStr, ini, fim) {
-  // dateStr is dd/mm/yyyy
-  const toNum = s => { const [d,m,y]=s.split('/'); return parseInt(y+m+d); };
-  const v = toNum(dateStr);
-  return v >= toNum(ini) && v <= toNum(fim);
+  const toNum = s => {
+    const n = normDate(s);
+    const [d,m,y] = n.split('/');
+    return parseInt(y+m.padStart(2,'0')+d.padStart(2,'0'));
+  };
+  try {
+    const v = toNum(dateStr);
+    return v >= toNum(ini) && v <= toNum(fim);
+  } catch(e) { return false; }
 }
 
 function renderDay() {
@@ -2085,8 +2108,8 @@ function renderFaltas() {
     const tm=!tv||f.televenda===tv;
     const sm=!status||(status==='resolvido'&&S.resolved.has(f.id))||(status==='pendente'&&!S.resolved.has(f.id))||(status==='sem_estoque'&&f.estoque<=0);
     let dm=true;
-    if(dIni){const[y,mo,d]=dIni.split('-');const fi=`${d}/${mo}/${y}`;dm=dm&&(!f.data||f.data>=fi);}
-    if(dFim){const[y,mo,d]=dFim.split('-');const ff=`${d}/${mo}/${y}`;dm=dm&&(!f.data||f.data<=ff);}
+    if(dIni){const[y,mo,d]=dIni.split('-');const fi=`${d}/${mo}/${y}`;dm=dm&&(!f.data||dateInRange(f.data,fi,fi)||f.data>=fi);}
+    if(dFim){const[y,mo,d]=dFim.split('-');const ff=`${d}/${mo}/${y}`;dm=dm&&(!f.data||dateInRange(f.data,ff,ff)||f.data<=ff);}
     return m&&rm&&tm&&sm&&dm;
   });
 
@@ -2360,16 +2383,9 @@ function faltasNoPeriodo() {
   const busca = (document.getElementById('x-busca').value||'').trim().toLowerCase();
 
   return S.faltas.filter(f => {
-    // date filter
     let ok = true;
-    if (ini) {
-      const [iy,im,id2] = ini.split('-'); const fIni = `${id2}/${im}/${iy}`;
-      ok = ok && (f.data >= fIni);
-    }
-    if (fim) {
-      const [fy,fm,fd] = fim.split('-'); const fFim = `${fd}/${fm}/${fy}`;
-      ok = ok && (f.data <= fFim);
-    }
+    if (ini) { const [y,m,d]=ini.split('-'); ok = ok && dateInRange(f.data, `${d}/${m}/${y}`, '31/12/9999'); }
+    if (fim) { const [y,m,d]=fim.split('-'); ok = ok && dateInRange(f.data, '01/01/0001', `${d}/${m}/${y}`); }
     if (busca) ok = ok && ((f.codigo||'').toLowerCase().includes(busca)||(f.produto||'').toLowerCase().includes(busca));
     return ok;
   });
@@ -2935,8 +2951,8 @@ function getDirFaltas() {
   const fim = document.getElementById('dir-fim').value;
   return S.faltas.filter(f => {
     let ok = true;
-    if (ini) { const [y,m,d]=ini.split('-'); ok = ok && f.data >= `${d}/${m}/${y}`; }
-    if (fim) { const [y,m,d]=fim.split('-'); ok = ok && f.data <= `${d}/${m}/${y}`; }
+    if (ini) { const [y,m,d]=ini.split('-'); ok = ok && dateInRange(f.data, `${d}/${m}/${y}`, '31/12/9999'); }
+    if (fim) { const [y,m,d]=fim.split('-'); ok = ok && dateInRange(f.data, '01/01/0001', `${d}/${m}/${y}`); }
     return ok;
   });
 }
