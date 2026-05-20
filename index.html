@@ -474,20 +474,45 @@ select.filter-input{cursor:pointer;}
 }
 /* Print styles */
 @media print {
-  .header, .status-bar, .tabs, .upload-grid,
-  .stats-row, .filters, .pagination,
-  .card-list, .btn, .resolve-btn,
-  #panel-dia, #panel-historico, #panel-conferencia,
-  #panel-recebimento, #panel-cruzamento, #panel-diretoria { display: none !important; }
-  body { background: white !important; color: black !important; }
-  .panel#panel-faltas { display: block !important; }
-  .table-wrap { border: 1px solid #ccc !important; }
-  .tbl th { background: #f0f0f0 !important; color: #000 !important; font-size: 9px !important; }
-  .tbl td { color: #000 !important; font-size: 9px !important; border-bottom: 1px solid #ddd !important; }
-  .conf-input { border: 1px solid #999 !important; background: #fff !important; color: #000 !important; }
-  .badge { border: 1px solid #ccc !important; color: #000 !important; background: #f5f5f5 !important; }
-  .sdot { display: none !important; }
-  @page { size: A4 landscape; margin: 10mm; }
+  .header,.status-bar,.tabs,.upload-grid,
+  .stats-row,.filters,.pagination,.card-list,
+  .btn,.resolve-btn,
+  #panel-dia,#panel-historico,#panel-conferencia,
+  #panel-recebimento,#panel-cruzamento,#panel-diretoria { display:none !important; }
+
+  body { background:#fff !important; color:#000 !important; font-family:Arial,sans-serif; margin:0; }
+  .main { padding:0 !important; max-width:100% !important; }
+
+  /* Mostra só o painel de faltas */
+  .panel#panel-faltas { display:block !important; }
+
+  /* Título */
+  .table-header-row::before {
+    content:"CONFERÊNCIA DE FALTAS";
+    display:block; font-size:14px; font-weight:bold;
+    text-align:center; margin-bottom:8px;
+  }
+
+  /* Tabela legível */
+  .table-wrap { border:1px solid #999 !important; border-radius:0 !important; box-shadow:none !important; margin-bottom:0 !important; }
+  .table-header-row { padding:6px 10px !important; border-bottom:1px solid #999 !important; }
+  .table-title { color:#000 !important; font-size:11px !important; }
+  .table-count { color:#555 !important; font-size:9px !important; }
+  .scroll-wrap { overflow:visible !important; }
+  .tbl { width:100% !important; min-width:unset !important; table-layout:fixed; }
+  .tbl thead { display:table-header-group; }
+  .tbl th { background:#eee !important; color:#000 !important; font-size:7px !important; padding:4px 5px !important; border:1px solid #bbb !important; white-space:normal !important; }
+  .tbl td { color:#000 !important; font-size:7px !important; padding:4px 5px !important; border:1px solid #ddd !important; white-space:normal !important; word-break:break-word; }
+  .tbl tr:hover td { background:none !important; }
+
+  /* Campos editáveis de conferência */
+  .conf-input { border:1px solid #333 !important; background:#fff !important; color:#000 !important; font-size:7px !important; padding:2px 4px !important; min-height:unset !important; height:18px !important; width:100% !important; }
+
+  /* Simplifica badges */
+  .badge { border:1px solid #999 !important; color:#000 !important; background:#f5f5f5 !important; font-size:7px !important; }
+  .sdot { display:none !important; }
+
+  @page { size:A4 landscape; margin:8mm; }
 }
 /* ===========================
    RESPONSABILIDADE / TURNOS
@@ -746,7 +771,8 @@ select.filter-input{cursor:pointer;}
         <option value="sem_estoque">Sem Estoque</option>
       </select>
       <button class="btn btn-export" onclick="exportFaltas()">⬇ Excel</button>
-      <button class="btn" style="background:var(--accent);color:#000" onclick="exportConferencia()">🖨️ Imprimir Conferência</button>
+      <button class="btn" style="background:var(--accent);color:#000" onclick="exportConferencia()">⬇ Excel Conferência</button>
+      <button class="btn" style="background:#555;color:#fff;border:1px solid #777" onclick="window.print()">🖨️ Imprimir</button>
       <button class="btn btn-danger btn-sm" onclick="limparConferencia()" title="Limpar todos os campos de conferência">🗑 Limpar Conf.</button>
     </div>
     <div class="table-wrap">
@@ -2595,10 +2621,12 @@ function exportConferencia() {
   const fname = `conferencia_faltas_${new Date().toISOString().slice(0,10)}.xlsx`;
   XLSX.writeFile(wb, fname);
 
-  // Also trigger print after a short delay
+  // Pergunta se quer imprimir separadamente
   setTimeout(() => {
-    if (confirm('Deseja imprimir a tabela agora?')) window.print();
-  }, 800);
+    if (confirm('Excel exportado! Deseja também imprimir a tabela agora?\n(Certifique-se de estar na aba Faltas)')) {
+      window.print();
+    }
+  }, 600);
 
   toast('✓ Excel de conferência exportado!');
 }
