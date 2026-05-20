@@ -6,7 +6,6 @@
 <title>Painel de Faltas — Televendas</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
   // pdf.js 2.x: point workerSrc to the same origin build.
   // In sandboxed/iframe contexts the worker may fall back to fake-worker mode,
@@ -1107,7 +1106,83 @@ function safeSave(key, val) { try { localStorage.setItem(key, JSON.stringify(val
 // ============================================================
 const SB_URL  = 'https://bkhpffcfnodlmszuited.supabase.co';
 const SB_KEY  = 'sb_publishable_ynfKcbdyJW7DDO_zW4KOqw_7RMBzyQ4';
-const db = supabase.createClient(SB_URL, SB_KEY);
+
+// Wrapper de API REST do Supabase usando fetch direto
+// Evita problemas de compatibilidade com chave sb_publishable_
+const db = {
+  from: (table) => ({
+    _table: table,
+    _filters: [],
+    _order: null,
+    _limit: null,
+    _select: '*',
+
+    select(cols) { this._select = cols; return this; },
+    eq(col, val) { this._filters.push(`${col}=eq.${val}`); return this; },
+    neq(col, val) { this._filters.push(`${col}=neq.${val}`); return this; },
+    gte(col, val) { this._filters.push(`${col}=gte.${val}`); return this; },
+    or(expr) { this._filters.push(`or=(${expr})`); return this; },
+    order(col, opts={}) { this._order = `${col}.${opts.ascending===false?'desc':'asc'}`; return this; },
+    limit(n) { this._limit = n; return this; },
+
+    async _fetch(method, body, extra='') {
+      let qs = [];
+      if (method === 'GET' || method === 'DELETE') {
+        if (this._select && method==='GET') qs.push(`select=${this._select}`);
+        this._filters.forEach(f => qs.push(f));
+        if (this._order) qs.push(`order=${this._order}`);
+        if (this._limit) qs.push(`limit=${this._limit}`);
+      }
+      if (extra) qs.push(extra);
+      const url = `${SB_URL}/rest/v1/${this._table}${qs.length?'?'+qs.join('&'):''}`;
+      const headers = {
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': method==='POST'?'return=minimal':'return=minimal'
+      };
+      if (method==='GET') headers['Prefer'] = 'return=representation';
+      const opts = { method, headers };
+      if (body) opts.body = JSON.stringify(body);
+      const resp = await fetch(url, opts);
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`${method} ${this._table}: ${resp.status} ${txt}`);
+      }
+      if (method==='GET') {
+        const data = await resp.json();
+        return { data, error: null };
+      }
+      return { data: null, error: null };
+    },
+
+    async insert(rows) {
+      const arr = Array.isArray(rows) ? rows : [rows];
+      // chunk 500
+      for (let i=0;i<arr.length;i+=500) {
+        await this._fetch('POST', arr.slice(i,i+500));
+      }
+      return { error: null };
+    },
+
+    async upsert(rows, opts={}) {
+      const arr = Array.isArray(rows) ? rows : [rows];
+      const extra = opts.onConflict ? `on_conflict=${opts.onConflict}` : '';
+      const origFetch = this._fetch.bind(this);
+      for (let i=0;i<arr.length;i+=500) {
+        const self = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+        await self._fetch('POST', arr.slice(i,i+500), extra);
+      }
+      return { error: null };
+    },
+
+    async delete() { return this._fetch('DELETE', null); },
+
+    then(resolve, reject) {
+      return this._fetch('GET').then(resolve, reject);
+    }
+  })
+};
 
 // Detect current period (yyyy-mm)
 function getPeriod() {
@@ -1135,7 +1210,7 @@ async function dbSaveFaltas(rows, periodo) {
     if (error) console.error('dbSaveFaltas error:', error);
   }
   // Save historico
-  await db.from('historico').insert({ tipo: 'faltas', arquivo: periodo, registros: rows.length, periodo });
+  await db.from('historico').insert([{ tipo: 'faltas', arquivo: periodo, registros: rows.length, periodo }]);
 }
 
 async function dbSaveConferencia(rows, periodo) {
@@ -1150,41 +1225,52 @@ async function dbSaveConferencia(rows, periodo) {
     const { error } = await db.from('conferencia').insert(payload.slice(i, i + 500));
     if (error) console.error('dbSaveConferencia error:', error);
   }
-  await db.from('historico').insert({ tipo: 'conferencia', arquivo: periodo, registros: rows.length, periodo });
+  await db.from('historico').insert([{ tipo: 'conferencia', arquivo: periodo, registros: rows.length, periodo }]);
 }
 
 async function dbSaveEstoque(rows) {
-  // Upsert by codigo
   const payload = rows.map(([cod, e]) => ({
     codigo: cod, produto: e.produto, estoque: e.estoque, posicao: e.posicao
   }));
+  // Use POST with on_conflict for upsert
   for (let i = 0; i < payload.length; i += 500) {
-    const { error } = await db.from('estoque').upsert(payload.slice(i, i + 500), { onConflict: 'codigo' });
-    if (error) console.error('dbSaveEstoque error:', error);
+    try {
+      const url = `${SB_URL}/rest/v1/estoque?on_conflict=codigo`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify(payload.slice(i, i + 500))
+      });
+    } catch(e) { console.error('dbSaveEstoque:', e); }
   }
-  await db.from('historico').insert({ tipo: 'estoque', arquivo: 'estoque', registros: payload.length });
+  await db.from('historico').insert([{ tipo: 'estoque', arquivo: 'estoque', registros: payload.length }]);
 }
 
 async function dbSaveRecebimento(rows, periodo) {
-  await db.from('recebimento').delete().eq('upload_ts', null).or(`data.gte.${periodo}-01`);
-  // Simpler: just upsert all by nf+codigo
+  // Delete old records for period then insert fresh
+  try {
+    const url = `${SB_URL}/rest/v1/recebimento?periodo=eq.${periodo}`;
+    await fetch(url, { method: 'DELETE', headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } });
+  } catch(e) {}
   const payload = rows.map(r => ({
     nf: r.nf, data: r.data, codigo: r.codigo,
-    produto: r.produto, qtd: r.qtd, fornecedor: r.fornecedor
+    produto: r.produto, qtd: r.qtd, fornecedor: r.fornecedor, periodo
   }));
   for (let i = 0; i < payload.length; i += 500) {
-    const { error } = await db.from('recebimento').insert(payload.slice(i, i + 500));
-    if (error) console.error('dbSaveRecebimento error:', error);
+    try { await db.from('recebimento').insert(payload.slice(i, i + 500)); } catch(e) { console.error(e); }
   }
-  await db.from('historico').insert({ tipo: 'recebimento', arquivo: periodo, registros: rows.length, periodo });
+  await db.from('historico').insert([{ tipo: 'recebimento', arquivo: periodo, registros: rows.length, periodo }]);
 }
 
 async function dbToggleResolvido(faltaId, resolvido) {
-  if (resolvido) {
-    await db.from('faltas').update({ resolvido: true }).eq('id', faltaId);
-  } else {
-    await db.from('faltas').update({ resolvido: false }).eq('id', faltaId);
-  }
+  try {
+    const url = `${SB_URL}/rest/v1/faltas?id=eq.${faltaId}`;
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ resolvido })
+    });
+  } catch(e) { console.error('dbToggleResolvido:', e); }
 }
 
 // ============================================================
