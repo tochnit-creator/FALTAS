@@ -613,6 +613,10 @@ select.filter-input{cursor:pointer;}
   </div>
   <div class="header-right">
     <div class="header-date" id="headerDate"></div>
+    <div id="script-badge" style="display:none;align-items:center;gap:6px;background:rgba(34,211,165,.12);border:1px solid var(--accent3);border-radius:20px;padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent3);white-space:nowrap;">
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--accent3);display:inline-block;animation:pulse 2s infinite;flex-shrink:0"></span>
+      <span id="script-badge-txt">Atualizado via script</span>
+    </div>
     <button class="btn-clear-header" onclick="clearHistory()">🗑</button>
   </div>
 </div>
@@ -2660,8 +2664,89 @@ function exportFaltas(){
 }
 
 // ============================================================
-// DIRETORIA — SENHA + DASHBOARD EXECUTIVO
+// POLLING — detecta atualizações feitas pelo script do Drive
 // ============================================================
+let lastKnownTs = {}; // { faltas: ts, conferencia: ts, estoque: ts, recebimento: ts }
+
+function timeAgo(ts) {
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60)  return `${diff}s atrás`;
+  if (diff < 3600) return `${Math.floor(diff/60)}min atrás`;
+  return `${Math.floor(diff/3600)}h atrás`;
+}
+
+function showScriptBadge(tipo, ts) {
+  const badge = document.getElementById('script-badge');
+  const txt   = document.getElementById('script-badge-txt');
+  if (!badge) return;
+  badge.style.display = 'flex';
+  txt.textContent = `✓ ${tipo} atualizado via script — ${timeAgo(ts)}`;
+
+  // Atualiza o texto do "X atrás" a cada minuto
+  if (window._badgeInterval) clearInterval(window._badgeInterval);
+  window._badgeInterval = setInterval(() => {
+    txt.textContent = `✓ ${tipo} atualizado via script — ${timeAgo(ts)}`;
+  }, 30000);
+}
+
+async function pollForUpdates() {
+  try {
+    const tipos = ['faltas', 'conferencia', 'estoque', 'recebimento'];
+    let foundNew = false;
+    let newestTipo = '';
+    let newestTs = 0;
+
+    for (const tipo of tipos) {
+      const { data } = await db
+        .from('historico')
+        .select('ts, tipo')
+        .eq('tipo', tipo)
+        .order('ts', { ascending: false })
+        .limit(1);
+
+      if (!data || !data.length) continue;
+
+      const ts = new Date(data[0].ts).getTime();
+      const key = `poll_${tipo}`;
+
+      // Compara com o timestamp que já conhecíamos
+      const prev = lastKnownTs[tipo] || 0;
+
+      if (ts > prev) {
+        if (!prev) {
+          // Primeira vez — só registra, não mostra badge
+          lastKnownTs[tipo] = ts;
+          continue;
+        }
+        // É mais novo que o que tínhamos — script atualizou!
+        lastKnownTs[tipo] = ts;
+        if (ts > newestTs) {
+          newestTs  = ts;
+          newestTipo = tipo.charAt(0).toUpperCase() + tipo.slice(1);
+        }
+        foundNew = true;
+      }
+    }
+
+    if (foundNew) {
+      showScriptBadge(newestTipo, newestTs);
+      // Recarrega os dados automaticamente
+      await dbLoadAll();
+    }
+  } catch(e) {
+    // Silencioso — não incomoda o usuário se falhar
+  }
+}
+
+// Inicia polling a cada 5 minutos
+function startPolling() {
+  // Primeira leitura após 30s (para pegar os ts iniciais)
+  setTimeout(async () => {
+    await pollForUpdates();
+    // Depois a cada 5 minutos
+    setInterval(pollForUpdates, 5 * 60 * 1000);
+  }, 30000);
+}
 
 // ⚠️ ALTERE AQUI A SENHA DA DIRETORIA
 const DIR_SENHA = 'faltas2026';
@@ -2951,7 +3036,7 @@ const _today = new Date();
 const _ini = new Date(_today.getFullYear(), _today.getMonth(), 1);
 document.getElementById('rsp-ini').value = _ini.toISOString().slice(0,10);
 document.getElementById('rsp-fim').value = _today.toISOString().slice(0,10);
-dbLoadAll();
+dbLoadAll().then(() => startPolling());
 </script>
 </body>
 </html>
