@@ -1577,44 +1577,53 @@ function renderPending() {
   const today = Date.now();
   const MS_DAY = 86400000;
 
-  // Group faltas by codigo
+  // Group faltas by codigo — todos não resolvidos
   const byProd = {};
   S.faltas.forEach(f => {
     if (!f.codigo) return;
-    if (!byProd[f.codigo]) byProd[f.codigo] = { codigo:f.codigo, produto:f.produto, qtd:0, ids:[] };
+    if (S.resolved.has(f.id)) return; // pula resolvidos
+    if (!byProd[f.codigo]) byProd[f.codigo] = { codigo:f.codigo, produto:f.produto, qtd:0, ids:[], datas:[] };
     byProd[f.codigo].qtd += f.qtd;
     byProd[f.codigo].ids.push(f.id);
+    if (f.data) byProd[f.codigo].datas.push(f.data);
   });
 
   const rows = Object.values(byProd).map(p => {
-    // Check if any item from this product was resolved
-    const anyResolved = p.ids.some(id => S.resolved.has(id));
-    const firstTs = S.firstSeen[p.codigo];
-    const dias = firstTs ? Math.floor((today - firstTs) / MS_DAY) : 0;
-    const est = getEstoque(p.codigo);
-    const recs = S.recebimento.filter(r=>r.codigo===p.codigo);
-    const lastRec = recs.sort((a,b)=>b.data>a.data?1:-1)[0];
-    return { ...p, resolved:anyResolved, dias, est, lastRec };
-  }).filter(p => !p.resolved); // only unresolved
+    // Data mais antiga da falta
+    const primeiraData = p.datas.sort()[0];
+    let dias = 0;
+    if (primeiraData) {
+      const [d,m,y] = primeiraData.split('/');
+      const ts = new Date(`${y}-${m}-${d}`).getTime();
+      dias = Math.floor((today - ts) / MS_DAY);
+    }
+    const est  = getEstoque(p.codigo);
+    const recs = S.recebimento.filter(r => r.codigo === p.codigo);
+    const lastRec = recs.sort((a,b) => b.data > a.data ? 1 : -1)[0];
+    return { ...p, primeiraData, dias, est, lastRec };
+  });
 
   document.getElementById('pending-count').textContent = rows.length + ' itens pendentes';
 
   const tbody = document.getElementById('tbody-pending');
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">✅</div><p>Nenhuma falta pendente</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty-icon">✅</div><p>Nenhuma falta pendente — carregue o PDF de Faltas</p></div></td></tr>`;
     return;
   }
 
-  rows.sort((a,b)=>b.dias-a.dias);
+  rows.sort((a,b) => b.dias - a.dias);
   tbody.innerHTML = rows.map(p => {
-    const firstFmt = p.dias > 0 ? new Date(S.firstSeen[p.codigo]).toLocaleDateString('pt-BR') : 'Hoje';
+    const firstFmt   = p.primeiraData || '—';
     const estoqueAtual = p.est ? p.est.estoque : '—';
-    const ec = p.est===undefined?'gray':p.est.estoque<=0?'red':p.est.estoque<=5?'yellow':'green';
-    const recText = p.lastRec ? `<span class="badge badge-green">${p.lastRec.data}</span>` : '<span class="badge badge-red">Não recebeu</span>';
+    const ec = !p.est ? 'gray' : p.est.estoque <= 0 ? 'red' : p.est.estoque <= 5 ? 'yellow' : 'green';
+    const recText = p.lastRec
+      ? `<span class="badge badge-green">${p.lastRec.data}</span>`
+      : '<span class="badge badge-red">Não recebeu</span>';
     let sit = '';
-    if (p.est && p.est.estoque<=0) sit = '<span class="badge badge-red">⚠ Zerado</span>';
-    else if (!p.lastRec) sit = '<span class="badge badge-yellow">Aguardando</span>';
-    else sit = '<span class="badge badge-orange">Em andamento</span>';
+    if (p.est && p.est.estoque <= 0) sit = '<span class="badge badge-red">⚠ Zerado</span>';
+    else if (!p.lastRec)             sit = '<span class="badge badge-yellow">Aguardando</span>';
+    else                             sit = '<span class="badge badge-orange">Em andamento</span>';
+
     return `<tr>
       <td class="mono">${firstFmt}</td>
       <td class="mono" style="color:${p.dias>=3?'var(--danger)':p.dias>=1?'var(--warn)':'var(--muted)'}">${p.dias}d</td>
