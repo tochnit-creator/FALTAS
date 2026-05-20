@@ -2060,12 +2060,12 @@ function sortF(key) {
 function goF(p){S.pages.faltas=p;renderFaltas();}
 
 function renderFaltas() {
-  const busca=document.getElementById('f-busca').value.toLowerCase();
-  const rep=document.getElementById('f-rep').value;
-  const tv=document.getElementById('f-tv').value;
-  const status=document.getElementById('f-status').value;
-  const dIni=document.getElementById('f-data-ini').value;
-  const dFim=document.getElementById('f-data-fim').value;
+  const busca=(document.getElementById('f-busca')?.value||'').toLowerCase();
+  const rep=(document.getElementById('f-rep')?.value||'');
+  const tv=(document.getElementById('f-tv')?.value||'');
+  const status=(document.getElementById('f-status')?.value||'');
+  const dIni=(document.getElementById('f-data-ini')?.value||'');
+  const dFim=(document.getElementById('f-data-fim')?.value||'');
 
   fFiltered=S.faltas.filter(f=>{
     const m=!busca||(f.produto||'').toLowerCase().includes(busca)||(f.pedido||'').toLowerCase().includes(busca)||(f.cliente||'').toLowerCase().includes(busca)||(f.codigo||'').includes(busca);
