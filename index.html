@@ -489,6 +489,38 @@ select.filter-input{cursor:pointer;}
   .sdot { display: none !important; }
   @page { size: A4 landscape; margin: 10mm; }
 }
+/* ===========================
+   RESPONSABILIDADE / TURNOS
+=========================== */
+.turno-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; text-align: center;
+}
+.turno-card.manha { border-top: 3px solid var(--warn); }
+.turno-card.tarde { border-top: 3px solid var(--accent); }
+.turno-card.noite { border-top: 3px solid #9b59b6; }
+.turno-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+.turno-val { font-family: var(--mono); font-size: 32px; font-weight: 700; margin-bottom: 4px; }
+.turno-card.manha .turno-val { color: var(--warn); }
+.turno-card.tarde .turno-val { color: var(--accent); }
+.turno-card.noite .turno-val { color: #9b59b6; }
+.turno-pct { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.turno-bar-wrap { background: var(--border); border-radius: 4px; height: 6px; overflow: hidden; }
+.turno-bar { height: 6px; border-radius: 4px; transition: width .6s ease; }
+.turno-card.manha .turno-bar { background: var(--warn); }
+.turno-card.tarde .turno-bar { background: var(--accent); }
+.turno-card.noite .turno-bar { background: #9b59b6; }
+.turno-pessoas { font-size: 10px; color: var(--muted); margin-top: 8px; line-height: 1.6; text-align: left; }
+
+.rank-bar-wrap { background: var(--border); border-radius: 3px; height: 4px; margin-top: 4px; }
+.rank-bar { height: 4px; border-radius: 3px; background: var(--accent2); transition: width .5s; }
+.turno-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+}
+.turno-badge.manha { background: rgba(255,184,48,.15); color: var(--warn); }
+.turno-badge.tarde { background: rgba(74,158,255,.15); color: var(--accent); }
+.turno-badge.noite { background: rgba(155,89,182,.15); color: #9b59b6; }
 </style>
 </head>
 <body>
@@ -550,9 +582,8 @@ select.filter-input{cursor:pointer;}
   <button class="tab active" onclick="switchTab('dia')">📅 Visão do Dia</button>
   <button class="tab" onclick="switchTab('faltas')">📋 Faltas</button>
   <button class="tab" onclick="switchTab('historico')">🕐 Histórico</button>
-  <button class="tab" onclick="switchTab('conferencia')">✅ Conferência</button>
   <button class="tab" onclick="switchTab('recebimento')">📦 Recebimento</button>
-  <button class="tab" onclick="switchTab('cruzamento')">🔗 Cruzamento</button>
+  <button class="tab" onclick="switchTab('cruzamento')">🎯 Responsabilidade</button>
 </div>
 
 <div class="main">
@@ -723,29 +754,14 @@ select.filter-input{cursor:pointer;}
   </div>
 
   <!-- ===== CONFERÊNCIA ===== -->
-  <div class="panel" id="panel-conferencia">
-    <div class="conf-grid" id="conf-summary"></div>
-    <div class="filters">
-      <input class="filter-input wide" type="text" id="cf-busca" placeholder="🔍 Conferente, pedido, cliente..." oninput="renderConf()">
-      <select class="filter-input" id="cf-conf" onchange="renderConf()"><option value="">Todos Conferentes</option></select>
-      <select class="filter-input" id="cf-sep" onchange="renderConf()"><option value="">Todos Separadores</option></select>
-    </div>
-    <div class="table-wrap">
-      <div class="table-header-row">
-        <span class="table-title">Registros de Conferência</span>
-        <span class="table-count" id="conf-count">0 itens</span>
-      </div>
-      <div class="scroll-wrap">
-        <table class="tbl">
-          <thead><tr>
-            <th>Data</th><th>Pedido</th><th>Cliente</th>
-            <th>Conferente</th><th>Separador</th><th>Itens</th><th>Vol.</th><th>Tempo</th>
-          </tr></thead>
-          <tbody id="tbody-conf"></tbody>
-        </table>
-      </div>
-      <div class="pagination" id="pag-conf"></div>
-    </div>
+  <!-- Conferência panel hidden — dados ainda carregados para cruzamento -->
+  <div class="panel" id="panel-conferencia" style="display:none">
+    <div id="conf-summary"></div>
+    <select id="cf-conf" style="display:none"><option value="">Todos Conferentes</option></select>
+    <select id="cf-sep" style="display:none"><option value="">Todos Separadores</option></select>
+    <span id="conf-count"></span>
+    <tbody id="tbody-conf"></tbody>
+    <div id="pag-conf"></div>
   </div>
 
   <!-- ===== RECEBIMENTO ===== -->
@@ -773,45 +789,80 @@ select.filter-input{cursor:pointer;}
     </div>
   </div>
 
-  <!-- ===== CRUZAMENTO ===== -->
+  <!-- ===== RESPONSABILIDADE ===== -->
   <div class="panel" id="panel-cruzamento">
 
-    <!-- INVESTIGATOR SEARCH -->
+    <!-- FILTROS DE INTERVALO -->
     <div class="cruz-search-box">
-      <div class="cruz-search-title">🔍 Investigar item por data</div>
-      <div class="cruz-search-desc">Digite o código ou nome do produto e escolha a data — o painel mostra quem conferiu e quem separou os pedidos que tiveram falta nesse item naquele dia.</div>
+      <div class="cruz-search-title">🎯 Análise de Responsabilidade por Faltas</div>
+      <div class="cruz-search-desc">Selecione o intervalo de datas para ver quem mais gerou faltas — conferente, separador e turno — e o % de representação no total.</div>
       <div class="cruz-search-row">
-        <input class="filter-input wide" type="text" id="x-busca"
-          placeholder="Código ou nome do produto (ex: 3340, CADEADO...)"
-          oninput="renderCruz()">
-        <input class="filter-input" type="date" id="x-data" onchange="renderCruz()" title="Data da falta">
-        <button class="btn btn-primary" onclick="document.getElementById('x-data').value='';renderCruz()">Todas as datas</button>
-        <button class="btn btn-export" onclick="exportCruz()">⬇ Excel</button>
+        <input class="filter-input" type="date" id="rsp-ini" onchange="renderCruz()" title="Data inicial">
+        <input class="filter-input" type="date" id="rsp-fim" onchange="renderCruz()" title="Data final">
+        <button class="btn btn-primary" onclick="setRspPeriod('mes')">Mês atual</button>
+        <button class="btn btn-primary" onclick="setRspPeriod('semana')">Última semana</button>
+        <button class="btn btn-primary" onclick="setRspPeriod('ontem')">Ontem</button>
+        <button class="btn btn-export" onclick="exportResp()">⬇ Excel</button>
       </div>
     </div>
 
-    <!-- RESULT CARDS (per product) -->
-    <div id="cruz-results"></div>
+    <!-- TURNOS -->
+    <div id="rsp-turnos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;"></div>
 
-    <!-- SUMMARY TABLE -->
+    <!-- CONFERENTES + SEPARADORES LADO A LADO -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
+      <div class="table-wrap">
+        <div class="table-header-row">
+          <span class="table-title">📋 Por Conferente</span>
+          <span class="table-count" id="rsp-conf-count"></span>
+        </div>
+        <div class="scroll-wrap">
+          <table class="tbl">
+            <thead><tr>
+              <th>Conferente</th><th>Turno</th><th>Faltas</th><th>% Total</th><th>Pedidos</th>
+            </tr></thead>
+            <tbody id="tbody-rsp-conf"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header-row">
+          <span class="table-title">📦 Por Separador</span>
+          <span class="table-count" id="rsp-sep-count"></span>
+        </div>
+        <div class="scroll-wrap">
+          <table class="tbl">
+            <thead><tr>
+              <th>Separador</th><th>Turno</th><th>Faltas</th><th>% Total</th><th>Pedidos</th>
+            </tr></thead>
+            <tbody id="tbody-rsp-sep"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DETALHE: ITENS POR CONFERENTE/SEPARADOR -->
+    <div class="cruz-search-box" style="margin-bottom:12px;">
+      <div class="cruz-search-title" style="font-size:11px;margin-bottom:8px;">🔍 Investigar item específico</div>
+      <div class="cruz-search-row">
+        <input class="filter-input wide" type="text" id="x-busca" placeholder="Código ou nome do produto..." oninput="renderCruz()">
+        <button class="btn btn-primary" onclick="document.getElementById('x-busca').value='';renderCruz()">Limpar</button>
+        <button class="btn btn-export" onclick="exportCruz()">⬇ Excel detalhado</button>
+      </div>
+    </div>
+
+    <div id="cruz-results"></div>
     <div class="table-wrap" id="cruz-table-wrap" style="display:none">
       <div class="table-header-row">
-        <span class="table-title">🔗 Resultado do Cruzamento</span>
+        <span class="table-title">Detalhe por Pedido</span>
         <span class="table-count" id="cruz-count">0 linhas</span>
       </div>
       <div class="scroll-wrap">
         <table class="tbl">
           <thead><tr>
-            <th>Data</th>
-            <th>Código</th>
-            <th>Produto</th>
-            <th>N° Pedido</th>
-            <th>Cliente</th>
-            <th>Qtd Falta</th>
-            <th>Conferente</th>
-            <th>Separador</th>
-            <th>Estoque</th>
-            <th>Recebeu?</th>
+            <th>Data</th><th>Código</th><th>Produto</th><th>N° Pedido</th>
+            <th>Cliente</th><th>Qtd Falta</th><th>Conferente</th><th>Turno Conf.</th>
+            <th>Separador</th><th>Turno Sep.</th><th>Estoque</th>
           </tr></thead>
           <tbody id="tbody-cruz"></tbody>
         </table>
@@ -1036,12 +1087,11 @@ renderHistory();
 // TABS
 // ============================================================
 function switchTab(tab) {
-  const TABS = ['dia','faltas','historico','conferencia','recebimento','cruzamento'];
+  const TABS = ['dia','faltas','historico','recebimento','cruzamento'];
   document.querySelectorAll('.tab').forEach((t,i)=>{ t.classList.toggle('active', TABS[i]===tab); });
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+tab).classList.add('active');
   if(tab==='cruzamento') renderCruz();
-  if(tab==='conferencia') renderConf();
   if(tab==='recebimento') renderRec();
   if(tab==='historico') renderPending();
   if(tab==='dia') renderDay();
@@ -1819,160 +1869,310 @@ function renderRec(){
 }
 
 // ============================================================
-// RENDER CRUZAMENTO — investigador por produto + data
+// MAPA DE TURNOS
 // ============================================================
-let cruzFiltered = []; // flat rows for export
+const TURNO_MAP = {
+  'MICHEL SILVA':    'noite',
+  'LUCIANO PEREIRA': 'tarde',
+  'JOHN MIKE':       'noite',
+  'LEONIDAS':        'noite',
+  'SILVIO GOMES':    'noite',
+  'MARCOS FERNANDE': 'tarde',
+  'OSVALDO':         'noite',
+  'CASSIO FREITAS':  'noite',
+  'RODRIGO SOUZA':   'noite',
+  'MAICON SILVA':    'noite',
+  'DANILO':          'noite',
+  'JESSICA P':       'tarde',
+  'MAURICIO NASCIM': 'tarde',
+  'VANESSA GOMES':   'tarde',
+  'WESLEY FIORAVAN': 'noite',
+  'JOSE LUIZ':       'manha',
+  'LUCAS SOUZA':     'noite',
+  'FABIANE':         'tarde',
+  'GABRIEL FIGUEIR': 'tarde',
+  'GUSTAVO ARAUJO':  'manha',
+  'JEFFERSON DE LI': 'noite',
+  'PETERSON SANTOS': 'noite',
+  'LAERTE ANTONIO':  'noite',
+  'PAULO EDUARDO':   'manha',
+  'THALITA SOARES':  'manha',
+  'ALLAN SOARES':    'tarde',
+  'CARLOS ALBERTO':  'noite',
+  'GENEILDA':        'manha',
+  'MARIA D':         'tarde',
+  'JOSEMAR':         'noite',
+  'LUCAS VIEIRA':    'tarde',
+};
+
+const TURNO_LABEL = { manha: '☀️ Manhã', tarde: '🌤 Tarde', noite: '🌙 Noite' };
+
+function getTurno(nome) {
+  if (!nome || nome === '—') return 'desconhecido';
+  // Try exact match first, then partial
+  const upper = nome.toUpperCase().trim();
+  for (const [key, turno] of Object.entries(TURNO_MAP)) {
+    if (upper.startsWith(key.toUpperCase()) || upper.includes(key.toUpperCase())) return turno;
+  }
+  return 'desconhecido';
+}
+
+// Helpers para filtro de intervalo
+function setRspPeriod(mode) {
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0,10);
+  if (mode === 'mes') {
+    const ini = new Date(today.getFullYear(), today.getMonth(), 1);
+    document.getElementById('rsp-ini').value = fmt(ini);
+    document.getElementById('rsp-fim').value = fmt(today);
+  } else if (mode === 'semana') {
+    const w = new Date(today); w.setDate(w.getDate()-6);
+    document.getElementById('rsp-ini').value = fmt(w);
+    document.getElementById('rsp-fim').value = fmt(today);
+  } else if (mode === 'ontem') {
+    const y = new Date(today); y.setDate(y.getDate()-1);
+    document.getElementById('rsp-ini').value = fmt(y);
+    document.getElementById('rsp-fim').value = fmt(y);
+  }
+  renderCruz();
+}
+
+function faltasNoPeriodo() {
+  const ini = document.getElementById('rsp-ini').value;
+  const fim = document.getElementById('rsp-fim').value;
+  const busca = (document.getElementById('x-busca').value||'').trim().toLowerCase();
+
+  return S.faltas.filter(f => {
+    // date filter
+    let ok = true;
+    if (ini) {
+      const [iy,im,id2] = ini.split('-'); const fIni = `${id2}/${im}/${iy}`;
+      ok = ok && (f.data >= fIni);
+    }
+    if (fim) {
+      const [fy,fm,fd] = fim.split('-'); const fFim = `${fd}/${fm}/${fy}`;
+      ok = ok && (f.data <= fFim);
+    }
+    if (busca) ok = ok && ((f.codigo||'').toLowerCase().includes(busca)||(f.produto||'').toLowerCase().includes(busca));
+    return ok;
+  });
+}
+
+let cruzFiltered = [];
 
 function renderCruz() {
-  const busca = document.getElementById('x-busca').value.trim().toLowerCase();
-  const dataFiltro = document.getElementById('x-data').value; // yyyy-mm-dd
-
-  const resultsEl = document.getElementById('cruz-results');
-  const tableWrap = document.getElementById('cruz-table-wrap');
-
-  // Need at least faltas loaded
   if (!S.faltas.length) {
-    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">🔗</div><p>Carregue o PDF de Faltas e o PDF de Conferência para usar o cruzamento.</p></div>`;
-    tableWrap.style.display = 'none';
+    document.getElementById('rsp-turnos').innerHTML = `<div class="cruz-empty" style="grid-column:1/-1"><div class="cruz-empty-icon">🎯</div><p>Carregue o PDF de Faltas e o PDF de Conferência para ver a análise.</p></div>`;
+    document.getElementById('tbody-rsp-conf').innerHTML = '';
+    document.getElementById('tbody-rsp-sep').innerHTML = '';
+    document.getElementById('cruz-results').innerHTML = '';
+    document.getElementById('cruz-table-wrap').style.display = 'none';
     return;
   }
 
-  // If nothing typed yet, show prompt
-  if (!busca && !dataFiltro) {
-    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">🔍</div><p>Digite um código ou nome de produto acima para investigar.<br><span style="font-size:10px">Ex: <strong>3340</strong> ou <strong>CADEADO</strong></span></p></div>`;
-    tableWrap.style.display = 'none';
-    return;
-  }
-
-  // 1. Filter faltas by search + date
-  let faltasFiltradas = S.faltas.filter(f => {
-    const matchBusca = !busca ||
-      (f.codigo || '').toLowerCase().includes(busca) ||
-      (f.produto || '').toLowerCase().includes(busca);
-
-    let matchData = true;
-    if (dataFiltro) {
-      const [y, m, d] = dataFiltro.split('-');
-      const dataFmt = `${d}/${m}/${y}`;
-      matchData = f.data === dataFmt;
-    }
-    return matchBusca && matchData;
-  });
-
-  if (!faltasFiltradas.length) {
-    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">📭</div><p>Nenhuma falta encontrada para esse filtro.</p></div>`;
-    tableWrap.style.display = 'none';
-    cruzFiltered = [];
-    document.getElementById('cruz-count').textContent = '0 linhas';
-    return;
-  }
-
-  // 2. Build lookup: pedido → conferência record
+  // Build pedido → conf lookup
   const confByPedido = {};
-  S.conferencia.forEach(c => {
-    if (c.pedido) confByPedido[c.pedido] = c;
-  });
+  S.conferencia.forEach(c => { if (c.pedido) confByPedido[c.pedido] = c; });
 
-  // 3. Enrich faltas with conferente/separador via pedido match
-  const enriched = faltasFiltradas.map(f => {
+  // Get filtered faltas and enrich
+  const faltas = faltasNoPeriodo();
+  const enriched = faltas.map(f => {
     const conf = confByPedido[f.pedido] || null;
     const est = S.estoque[f.codigo];
-    const rec = S.recebimento.find(r => r.codigo === f.codigo);
     return {
       ...f,
       conferente: conf ? conf.conferente : '—',
       separador:  conf ? conf.separador  : '—',
+      turnoCon:   conf ? getTurno(conf.conferente) : 'desconhecido',
+      turnoSep:   conf ? getTurno(conf.separador)  : 'desconhecido',
       estoqueAtual: est ? est.estoque : f.estoque,
-      posicao: est ? est.posicao : '',
-      recebeu: rec ? rec.data : null,
     };
   });
 
-  cruzFiltered = enriched;
+  const totalFaltas = enriched.length;
 
-  // 4. Group by produto/codigo for card view
-  const byProd = {};
+  // ── TURNOS (por conferente) ──
+  const turnoCounts = { manha: 0, tarde: 0, noite: 0 };
   enriched.forEach(r => {
+    if (turnoCounts[r.turnoCon] !== undefined) turnoCounts[r.turnoCon]++;
+  });
+  const maxTurno = Math.max(...Object.values(turnoCounts), 1);
+
+  // People per turno
+  const pessoasPorTurno = { manha: [], tarde: [], noite: [] };
+  Object.entries(TURNO_MAP).forEach(([nome, turno]) => {
+    if (pessoasPorTurno[turno]) pessoasPorTurno[turno].push(nome);
+  });
+
+  document.getElementById('rsp-turnos').innerHTML = ['manha','tarde','noite'].map(t => {
+    const cnt = turnoCounts[t];
+    const pct = totalFaltas ? ((cnt/totalFaltas)*100).toFixed(1) : 0;
+    const barW = maxTurno ? Math.round((cnt/maxTurno)*100) : 0;
+    return `<div class="turno-card ${t}">
+      <div class="turno-title">${TURNO_LABEL[t]}</div>
+      <div class="turno-val">${cnt}</div>
+      <div class="turno-pct">${pct}% das faltas</div>
+      <div class="turno-bar-wrap"><div class="turno-bar" style="width:${barW}%"></div></div>
+      <div class="turno-pessoas">${pessoasPorTurno[t].join(' · ')}</div>
+    </div>`;
+  }).join('');
+
+  // ── RANKING CONFERENTES ──
+  const byConf = {};
+  enriched.forEach(r => {
+    const k = r.conferente;
+    if (!byConf[k]) byConf[k] = { nome: k, turno: r.turnoCon, faltas: 0, pedidos: new Set() };
+    byConf[k].faltas++;
+    byConf[k].pedidos.add(r.pedido);
+  });
+  const rankConf = Object.values(byConf).sort((a,b)=>b.faltas-a.faltas);
+  const maxConf = rankConf[0]?.faltas || 1;
+
+  document.getElementById('rsp-conf-count').textContent = rankConf.length + ' pessoas';
+  document.getElementById('tbody-rsp-conf').innerHTML = rankConf.map((r,i) => {
+    const pct = totalFaltas ? ((r.faltas/totalFaltas)*100).toFixed(1) : 0;
+    const barW = Math.round((r.faltas/maxConf)*100);
+    const tb = r.turno !== 'desconhecido' ? `<span class="turno-badge ${r.turno}">${r.turno}</span>` : '—';
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    return `<tr>
+      <td style="font-weight:600">${medal} ${r.nome}</td>
+      <td>${tb}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${r.faltas}
+        <div class="rank-bar-wrap"><div class="rank-bar" style="width:${barW}%"></div></div>
+      </td>
+      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+      <td class="mono">${r.pedidos.size}</td>
+    </tr>`;
+  }).join('');
+
+  // ── RANKING SEPARADORES ──
+  const bySep = {};
+  enriched.forEach(r => {
+    const k = r.separador;
+    if (!bySep[k]) bySep[k] = { nome: k, turno: r.turnoSep, faltas: 0, pedidos: new Set() };
+    bySep[k].faltas++;
+    bySep[k].pedidos.add(r.pedido);
+  });
+  const rankSep = Object.values(bySep).sort((a,b)=>b.faltas-a.faltas);
+  const maxSep = rankSep[0]?.faltas || 1;
+
+  document.getElementById('rsp-sep-count').textContent = rankSep.length + ' pessoas';
+  document.getElementById('tbody-rsp-sep').innerHTML = rankSep.map((r,i) => {
+    const pct = totalFaltas ? ((r.faltas/totalFaltas)*100).toFixed(1) : 0;
+    const barW = Math.round((r.faltas/maxSep)*100);
+    const tb = r.turno !== 'desconhecido' ? `<span class="turno-badge ${r.turno}">${r.turno}</span>` : '—';
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    return `<tr>
+      <td style="font-weight:600">${medal} ${r.nome}</td>
+      <td>${tb}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${r.faltas}
+        <div class="rank-bar-wrap"><div class="rank-bar" style="width:${barW}%;background:var(--accent3)"></div></div>
+      </td>
+      <td class="mono" style="color:${parseFloat(pct)>=10?'var(--danger)':'var(--muted)'}">${pct}%</td>
+      <td class="mono">${r.pedidos.size}</td>
+    </tr>`;
+  }).join('');
+
+  // ── DETALHE POR ITEM (se busca preenchida) ──
+  const busca = (document.getElementById('x-busca').value||'').trim().toLowerCase();
+  const resultsEl = document.getElementById('cruz-results');
+  const tableWrap = document.getElementById('cruz-table-wrap');
+
+  if (!busca) {
+    resultsEl.innerHTML = '';
+    tableWrap.style.display = 'none';
+    cruzFiltered = enriched;
+    return;
+  }
+
+  const filtItem = enriched.filter(f =>
+    (f.codigo||'').toLowerCase().includes(busca) ||
+    (f.produto||'').toLowerCase().includes(busca)
+  );
+
+  cruzFiltered = filtItem;
+
+  if (!filtItem.length) {
+    resultsEl.innerHTML = `<div class="cruz-empty"><div class="cruz-empty-icon">📭</div><p>Nenhuma falta encontrada para esse produto no período.</p></div>`;
+    tableWrap.style.display = 'none';
+    return;
+  }
+
+  // Group by produto for cards
+  const byProd = {};
+  filtItem.forEach(r => {
     const key = r.codigo || r.produto;
-    if (!byProd[key]) byProd[key] = { codigo: r.codigo, produto: r.produto, rows: [] };
+    if (!byProd[key]) byProd[key] = { codigo:r.codigo, produto:r.produto, rows:[] };
     byProd[key].rows.push(r);
   });
 
-  // 5. Render product cards
   resultsEl.innerHTML = Object.values(byProd).map(p => {
-    const totalQtd = p.rows.reduce((s, r) => s + r.qtd, 0);
+    const totalQtd = p.rows.reduce((s,r)=>s+r.qtd,0);
     const est = S.estoque[p.codigo];
-    const estoqueAtual = est ? est.estoque : (p.rows[0]?.estoque ?? '—');
-    const ec = estoqueAtual <= 0 ? 'red' : estoqueAtual <= 5 ? 'yellow' : 'green';
+    const eVal = est ? est.estoque : (p.rows[0]?.estoqueAtual??'—');
+    const ec = eVal<=0?'red':eVal<=5?'yellow':'green';
 
-    // Unique conferentes with count
-    const confMap = {};
+    const confMap = {}, sepMap = {};
     p.rows.forEach(r => {
-      if (r.conferente && r.conferente !== '—')
-        confMap[r.conferente] = (confMap[r.conferente] || 0) + 1;
-    });
-    const sepMap = {};
-    p.rows.forEach(r => {
-      if (r.separador && r.separador !== '—')
-        sepMap[r.separador] = (sepMap[r.separador] || 0) + 1;
+      if (r.conferente&&r.conferente!=='—') confMap[r.conferente]=(confMap[r.conferente]||0)+1;
+      if (r.separador &&r.separador !=='—') sepMap[r.separador] =(sepMap[r.separador] ||0)+1;
     });
 
     const confPills = Object.entries(confMap).length
-      ? Object.entries(confMap).map(([n, c]) =>
-          `<div class="person-pill conf">✅ ${n} <span class="pill-count">${c}x</span></div>`).join('')
+      ? Object.entries(confMap).sort((a,b)=>b[1]-a[1]).map(([n,c])=>{
+          const t=getTurno(n);
+          const tb=t!=='desconhecido'?`<span class="turno-badge ${t}">${t}</span>`:'';
+          return `<div class="person-pill conf">✅ ${n} ${tb} <span class="pill-count">${c}x</span></div>`;
+        }).join('')
       : '<span style="color:var(--muted);font-size:11px">Não encontrado na conferência</span>';
 
     const sepPills = Object.entries(sepMap).length
-      ? Object.entries(sepMap).map(([n, c]) =>
-          `<div class="person-pill sep">📦 ${n} <span class="pill-count">${c}x</span></div>`).join('')
+      ? Object.entries(sepMap).sort((a,b)=>b[1]-a[1]).map(([n,c])=>{
+          const t=getTurno(n);
+          const tb=t!=='desconhecido'?`<span class="turno-badge ${t}">${t}</span>`:'';
+          return `<div class="person-pill sep">📦 ${n} ${tb} <span class="pill-count">${c}x</span></div>`;
+        }).join('')
       : '<span style="color:var(--muted);font-size:11px">Não encontrado</span>';
 
-    // Pedidos table rows
-    const pedRows = p.rows.map(r => {
-      const recBadge = r.recebeu
-        ? `<span class="badge badge-green">✓ ${r.recebeu}</span>`
-        : '<span class="badge badge-gray">Não</span>';
-      const confColor = r.conferente !== '—' ? 'var(--accent)' : 'var(--muted)';
-      const sepColor  = r.separador  !== '—' ? 'var(--accent2)' : 'var(--muted)';
-      return `<tr>
-        <td class="mono">${r.data || '—'}</td>
-        <td class="mono">${r.pedido || '—'}</td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente || '—'}</td>
-        <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
-        <td style="font-weight:600;color:${confColor}">${r.conferente}</td>
-        <td style="font-weight:600;color:${sepColor}">${r.separador}</td>
-        <td>${recBadge}</td>
-      </tr>`;
-    }).join('');
+    const pedRows = p.rows.map(r=>`<tr>
+      <td class="mono">${r.data||'—'}</td>
+      <td class="mono">${r.pedido||'—'}</td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente||'—'}</td>
+      <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
+      <td style="font-weight:600;color:${r.conferente!=='—'?'var(--accent)':'var(--muted)'}">
+        ${r.conferente}
+        ${r.turnoCon!=='desconhecido'?`<span class="turno-badge ${r.turnoCon}">${r.turnoCon}</span>`:''}
+      </td>
+      <td style="font-weight:600;color:${r.separador!=='—'?'var(--accent2)':'var(--muted)'}">
+        ${r.separador}
+        ${r.turnoSep!=='desconhecido'?`<span class="turno-badge ${r.turnoSep}">${r.turnoSep}</span>`:''}
+      </td>
+    </tr>`).join('');
 
-    return `
-    <div class="cruz-prod-card">
+    return `<div class="cruz-prod-card">
       <div class="cruz-prod-header">
-        <div class="cruz-prod-code">${p.codigo || '—'}</div>
-        <div class="cruz-prod-name">${p.produto || '—'}</div>
+        <div class="cruz-prod-code">${p.codigo||'—'}</div>
+        <div class="cruz-prod-name">${p.produto||'—'}</div>
         <div class="cruz-prod-stats">
-          <span class="badge badge-${ec}">Est: ${estoqueAtual}</span>
+          <span class="badge badge-${ec}">Est: ${eVal}</span>
           <span class="badge badge-orange">${totalQtd} un faltou</span>
           <span class="badge badge-gray">${p.rows.length} pedido${p.rows.length>1?'s':''}</span>
         </div>
       </div>
-
       <div class="person-section">
         <div class="person-label">✅ Conferentes responsáveis</div>
         <div class="person-pills">${confPills}</div>
       </div>
-
       <div class="person-section">
         <div class="person-label">📦 Separadores responsáveis</div>
         <div class="person-pills">${sepPills}</div>
       </div>
-
       <div class="person-section" style="padding:0;">
         <div style="overflow-x:auto;">
           <table class="cruz-pedidos">
             <thead><tr>
               <th>Data</th><th>N° Pedido</th><th>Cliente</th>
-              <th>Qtd Falta</th><th>Conferente</th><th>Separador</th><th>Recebeu?</th>
+              <th>Qtd</th><th>Conferente / Turno</th><th>Separador / Turno</th>
             </tr></thead>
             <tbody>${pedRows}</tbody>
           </table>
@@ -1981,41 +2181,83 @@ function renderCruz() {
     </div>`;
   }).join('');
 
-  // 6. Also populate summary table
   tableWrap.style.display = 'block';
-  document.getElementById('cruz-count').textContent = enriched.length + ' linhas';
-  document.getElementById('tbody-cruz').innerHTML = enriched.map(r => {
-    const ec = r.estoqueAtual <= 0 ? 'red' : r.estoqueAtual <= 5 ? 'yellow' : 'green';
-    const recBadge = r.recebeu
-      ? `<span class="badge badge-green">✓ ${r.recebeu}</span>`
-      : '<span class="badge badge-gray">Não</span>';
-    return `<tr>
-      <td class="mono">${r.data||'—'}</td>
-      <td class="mono">${r.codigo||'—'}</td>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.produto||'—'}</td>
-      <td class="mono">${r.pedido||'—'}</td>
-      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente||'—'}</td>
-      <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
-      <td style="color:${r.conferente!=='—'?'var(--accent)':'var(--muted)'};font-weight:600">${r.conferente}</td>
-      <td style="color:${r.separador!=='—'?'var(--accent2)':'var(--muted)'};font-weight:600">${r.separador}</td>
-      <td class="mono"><span class="badge badge-${ec}">${r.estoqueAtual}</span></td>
-      <td>${recBadge}</td>
-    </tr>`;
-  }).join('');
+  document.getElementById('cruz-count').textContent = filtItem.length + ' linhas';
+  document.getElementById('tbody-cruz').innerHTML = filtItem.map(r=>`<tr>
+    <td class="mono">${r.data||'—'}</td>
+    <td class="mono">${r.codigo||'—'}</td>
+    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.produto||'—'}</td>
+    <td class="mono">${r.pedido||'—'}</td>
+    <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.cliente||'—'}</td>
+    <td class="mono" style="color:var(--accent2);font-weight:700">${r.qtd}</td>
+    <td style="color:${r.conferente!=='—'?'var(--accent)':'var(--muted)'};font-weight:600">${r.conferente}</td>
+    <td>${r.turnoCon!=='desconhecido'?`<span class="turno-badge ${r.turnoCon}">${r.turnoCon}</span>`:'—'}</td>
+    <td style="color:${r.separador!=='—'?'var(--accent2)':'var(--muted)'};font-weight:600">${r.separador}</td>
+    <td>${r.turnoSep!=='desconhecido'?`<span class="turno-badge ${r.turnoSep}">${r.turnoSep}</span>`:'—'}</td>
+    <td class="mono"><span class="badge badge-${r.estoqueAtual<=0?'red':r.estoqueAtual<=5?'yellow':'green'}">${r.estoqueAtual}</span></td>
+  </tr>`).join('');
 }
 
 function exportCruz() {
-  if (!cruzFiltered.length) { toast('Faça uma busca primeiro'); return; }
-  const rows = cruzFiltered.map(r => ({
+  const data = cruzFiltered.length ? cruzFiltered : [];
+  if (!data.length) { toast('Nenhum dado para exportar — selecione um período'); return; }
+  const rows = data.map(r => ({
     'Data': r.data, 'Código': r.codigo, 'Produto': r.produto,
     'N° Pedido': r.pedido, 'Cliente': r.cliente, 'Qtd Falta': r.qtd,
-    'Conferente': r.conferente, 'Separador': r.separador,
-    'Estoque': r.estoqueAtual, 'Recebeu': r.recebeu || 'Não'
+    'Conferente': r.conferente, 'Turno Conf.': r.turnoCon,
+    'Separador': r.separador, 'Turno Sep.': r.turnoSep,
+    'Estoque': r.estoqueAtual
   }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Cruzamento');
-  XLSX.writeFile(wb, `cruzamento_${new Date().toISOString().slice(0,10)}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Responsabilidade');
+  XLSX.writeFile(wb, `responsabilidade_${new Date().toISOString().slice(0,10)}.xlsx`);
   toast('✓ Excel exportado!');
+}
+
+function exportResp() {
+  // Export turno + ranking summary
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: por conferente
+  const confData = [];
+  document.querySelectorAll('#tbody-rsp-conf tr').forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 5) confData.push({
+      'Conferente': tds[0].textContent.replace(/[🥇🥈🥉]/g,'').trim(),
+      'Turno': tds[1].textContent.trim(),
+      'Faltas': tds[2].textContent.trim().split('\n')[0].trim(),
+      '% Total': tds[3].textContent.trim(),
+      'Pedidos': tds[4].textContent.trim()
+    });
+  });
+  if (confData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(confData), 'Por Conferente');
+
+  // Sheet 2: por separador
+  const sepData = [];
+  document.querySelectorAll('#tbody-rsp-sep tr').forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 5) sepData.push({
+      'Separador': tds[0].textContent.replace(/[🥇🥈🥉]/g,'').trim(),
+      'Turno': tds[1].textContent.trim(),
+      'Faltas': tds[2].textContent.trim().split('\n')[0].trim(),
+      '% Total': tds[3].textContent.trim(),
+      'Pedidos': tds[4].textContent.trim()
+    });
+  });
+  if (sepData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sepData), 'Por Separador');
+
+  // Sheet 3: detalhe completo
+  if (cruzFiltered.length) {
+    const det = cruzFiltered.map(r=>({
+      'Data':r.data,'Código':r.codigo,'Produto':r.produto,'N° Pedido':r.pedido,
+      'Cliente':r.cliente,'Qtd Falta':r.qtd,'Conferente':r.conferente,
+      'Turno Conf.':r.turnoCon,'Separador':r.separador,'Turno Sep.':r.turnoSep
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(det), 'Detalhe');
+  }
+
+  XLSX.writeFile(wb, `responsabilidade_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('✓ Excel de responsabilidade exportado!');
 }
 
 // ============================================================
@@ -2107,6 +2349,11 @@ function exportFaltas(){
 
 // Init: load from Supabase first, fallback to local
 setDay('ontem');
+// Set default period for responsabilidade tab (current month)
+const _today = new Date();
+const _ini = new Date(_today.getFullYear(), _today.getMonth(), 1);
+document.getElementById('rsp-ini').value = _ini.toISOString().slice(0,10);
+document.getElementById('rsp-fim').value = _today.toISOString().slice(0,10);
 dbLoadAll();
 </script>
 </body>
