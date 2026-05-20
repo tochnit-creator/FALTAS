@@ -1638,25 +1638,34 @@ function loadEstoque(input) {
       const cod = String(row[colCod] || '').trim();
       if (!cod || cod === 'CPRO' || cod === '') continue;
 
-      // Remove código numérico com .0 (ex: "4408.0" → "4408")
-      const codLimpo = cod.replace(/\.0$/, '');
+      // Normaliza código: remove .0 e zeros à esquerda
+      const codSemPonto = cod.replace(/\.0+$/, '');
+      const codLimpo = codSemPonto.replace(/^0+/, '') || codSemPonto;
+      const codComZero = codLimpo.padStart(4, '0');
 
       const posicao = String(row[colPPP] || '').trim();
       const produto = String(row[colProd] || '').trim();
       const estoqueVal = parseFloat(row[colEst]) || 0;
 
-      S.estoque[codLimpo] = { produto, estoque: estoqueVal, posicao };
-
-      // Também salva com o código original caso tenha variação
-      if (codLimpo !== cod) S.estoque[cod] = S.estoque[codLimpo];
+      const entry = { produto, estoque: estoqueVal, posicao };
+      // Salva com todas as variações para lookup robusto
+      S.estoque[codSemPonto] = entry;  // ex: "0173" ou "10218"
+      S.estoque[codLimpo]    = entry;  // ex: "173" ou "10218"
+      S.estoque[codComZero]  = entry;  // ex: "0173"
 
       count++;
     }
 
-    // Log para debug — mostra 3 primeiros itens no console
-    const sample = Object.entries(S.estoque).slice(0,3);
-    console.log('Estoque carregado — amostra:', sample);
-    console.log(`Colunas detectadas: CPRO[${colCod}] PRODUTO[${colProd}] ESTOQUE[${colEst}] PPP[${colPPP}]`);
+    // Log para debug — mostra amostra e verifica códigos específicos
+    console.log('=== ESTOQUE CARREGADO ===');
+    console.log('Total produtos:', count);
+    console.log('Amostra (primeiros 3):', Object.entries(S.estoque).slice(0,3));
+    // Verifica códigos críticos
+    ['10218','0173','173','4408','0169','169'].forEach(cod => {
+      const r = S.estoque[cod];
+      if (r) console.log(`✓ ${cod} → posicao: "${r.posicao}" estoque: ${r.estoque}`);
+      else console.log(`✗ ${cod} → NÃO ENCONTRADO`);
+    });
 
     const now = Date.now();
     S.updates.est = { ts:now, file:file.name, count };
@@ -1676,36 +1685,45 @@ function loadRecebimento(input) {
   reader.onload = e => {
     const wb = XLSX.read(e.target.result,{type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const data = XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    // Cabeçalho duplo: linha 1 + linha 2. Dados a partir da linha 3 (índice 2)
+    const raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    // Índices fixos confirmados: B(1)=NF C(2)=Data D(3)=Código F(5)=Produto G(6)=Qtd K(10)=Fornecedor
+    const COL_NF=1, COL_DATA=2, COL_COD=3, COL_PROD=5, COL_QTD=6, COL_FORN=10;
     S.recebimento = [];
-    for(let i=2;i<data.length;i++){
-      const row=data[i];
-      if(!row[3]) continue;
-      let dataE='';
-      if(row[2]){
-        if(typeof row[2]==='number'){
-          const d=XLSX.SSF.parse_date_code(row[2]);
-          dataE=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
-        } else dataE=String(row[2]);
+    for(let i=2;i<raw.length;i++){
+      const row=raw[i];
+      const cod=String(row[COL_COD]||''). trim().replace(/\.0$/,'');
+      if(!cod||cod==='CPRO'||cod==='') continue;
+      let dataFmt='';
+      const dv=row[COL_DATA];
+      if(dv){
+        if(typeof dv==='number'){
+          const d=XLSX.SSF.parse_date_code(dv);
+          dataFmt=`${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
+        } else if(typeof dv==='string'&&dv.includes('-')){
+          const pts=dv.split('-');
+          if(pts.length>=3) dataFmt=`${pts[2].substring(0,2)}/${pts[1]}/${pts[0]}`;
+        } else dataFmt=String(dv);
       }
       S.recebimento.push({
-        nf:String(row[1]||''), data:dataE,
-        codigo:String(row[3]||'').trim(),
-        produto:String(row[5]||''),
-        qtd:parseFloat(row[6])||0,
-        fornecedor:String(row[10]||''),
+        nf:String(row[COL_NF]||''). trim(),
+        data:dataFmt,
+        codigo:cod,
+        produto:String(row[COL_PROD]||''). trim(),
+        qtd:parseFloat(row[COL_QTD])||0,
+        fornecedor:String(row[COL_FORN]||''). trim(),
         id:Math.random().toString(36).substr(2,9)
       });
     }
-    const now = Date.now();
-    S.updates.rec = { ts:now, file:file.name, count:S.recebimento.length };
-    safeSave(KEYS.updates, S.updates);
-    addHistory('recebimento', `Recebimento: ${file.name}`, S.recebimento.length);
+    console.log('Recebimento amostra:',S.recebimento.slice(0,2));
+    const now=Date.now(); const _per=getPeriod();
+    S.updates.rec={ts:now,file:file.name,count:S.recebimento.length};
+    safeSave(KEYS.updates,S.updates);
+    addHistory('recebimento',`Recebimento: ${file.name}`,S.recebimento.length);
     markCard('card-rec','sub-rec',file.name);
     updateStats(); renderStatusBar(); renderRec(); renderFaltas();
-    const _per=getPeriod();
-    toast('✓ Recebimento: ' + S.recebimento.length + ' registros — salvando...');
-    dbSaveRecebimento(S.recebimento,_per).then(()=>toast('✓ Recebimento salvo no servidor!')).catch(e=>console.error(e));
+    toast(`✓ Recebimento: ${S.recebimento.length} registros — salvando...`);
+    dbSaveRecebimento(S.recebimento,_per).then(()=>toast('✓ Recebimento salvo!')).catch(e=>console.error(e));
   };
   reader.readAsArrayBuffer(file);
 }
@@ -1880,17 +1898,35 @@ function recebeuProd(codigo){ return S.recebimento.find(r=>r.codigo===codigo); }
 // Lookup de estoque normalizando código (remove zeros à esquerda e .0)
 function getEstoque(codigo) {
   if (!codigo) return null;
-  // Tenta direto
-  if (S.estoque[codigo]) return S.estoque[codigo];
-  // Remove zeros à esquerda: "0173" → "173"
-  const semZero = String(codigo).replace(/^0+/, '');
+  const s = String(codigo).trim();
+
+  // 1. Direto
+  if (S.estoque[s]) return S.estoque[s];
+
+  // 2. Remove zeros à esquerda: "0173" → "173"
+  const semZero = s.replace(/^0+/, '') || s;
   if (S.estoque[semZero]) return S.estoque[semZero];
-  // Remove .0 no final: "4408.0" → "4408"
-  const semPonto = String(codigo).replace(/\.0$/, '');
+
+  // 3. Remove .0 no final: "173.0" → "173"
+  const semPonto = s.replace(/\.0+$/, '');
   if (S.estoque[semPonto]) return S.estoque[semPonto];
-  // Tenta com zero à esquerda: "173" → "0173"
-  const comZero = String(codigo).padStart(4, '0');
-  if (S.estoque[comZero]) return S.estoque[comZero];
+
+  // 4. Remove zeros E .0: "0173.0" → "173"
+  const clean = s.replace(/^0+/, '').replace(/\.0+$/, '') || s;
+  if (S.estoque[clean]) return S.estoque[clean];
+
+  // 5. Tenta com zero à esquerda até 4 dígitos: "173" → "0173"
+  const com1Zero = s.padStart(4, '0');
+  if (S.estoque[com1Zero]) return S.estoque[com1Zero];
+
+  // 6. Busca parcial como fallback — percorre todas as chaves
+  // (lento mas garante achar mesmo com variação de formato)
+  const cleanNum = semZero.replace(/\.0+$/, '');
+  for (const key of Object.keys(S.estoque)) {
+    const keyClean = key.replace(/^0+/, '').replace(/\.0+$/, '');
+    if (keyClean === cleanNum) return S.estoque[key];
+  }
+
   return null;
 }
 
