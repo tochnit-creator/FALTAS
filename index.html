@@ -794,6 +794,8 @@ select.filter-input{cursor:pointer;}
             <th onclick="sortF('posicao')">Posição ↕</th>
             <th>N° Pedido</th><th>Cliente</th>
             <th>Recebeu?</th>
+            <th style="color:var(--accent2)">✅ Conferente</th>
+            <th style="color:var(--accent3)">📦 Separador</th>
             <th style="background:rgba(74,158,255,.08);color:var(--accent);min-width:130px">✏️ Conferido por</th>
             <th style="background:rgba(74,158,255,.08);color:var(--accent);min-width:90px">📦 Qtd Físico</th>
             <th>Status</th>
@@ -2088,7 +2090,7 @@ function renderFaltas() {
   const tbody=document.getElementById('tbody-faltas');
 
   if(!fFiltered.length){
-    tbody.innerHTML=`<tr><td colspan="11"><div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Faça upload do PDF de Faltas':'Nenhuma falta encontrada'}</p></div></td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="13"><div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Faça upload do PDF de Faltas':'Nenhuma falta encontrada'}</p></div></td></tr>`;
     document.getElementById('card-list-faltas').innerHTML=`<div class="empty"><div class="empty-icon">📭</div><p>${S.faltas.length===0?'Faça upload do PDF de Faltas':'Nenhuma falta encontrada'}</p></div>`;
     document.getElementById('pag-faltas').innerHTML=''; return;
   }
@@ -2103,6 +2105,16 @@ function renderFaltas() {
     const cd = S.confData[f.id] || {};
     const confPor = cd.conferidoPor || '';
     const qtdFis = cd.qtdFisico !== undefined ? cd.qtdFisico : '';
+
+    // Busca conferente e separador pelo pedido
+    const confRec = S.conferencia.find(c => c.pedido === f.pedido);
+    const conferente = confRec ? (confRec.conferente || '—') : '—';
+    const separador  = confRec ? (confRec.separador  || '—') : '—';
+    const tcConf = getTurno(conferente);
+    const tcSep  = getTurno(separador);
+    const tbConf = tcConf!=='desconhecido' ? `<span class="turno-badge ${tcConf}" style="font-size:8px">${tcConf}</span>` : '';
+    const tbSep  = tcSep !=='desconhecido' ? `<span class="turno-badge ${tcSep}"  style="font-size:8px">${tcSep}</span>`  : '';
+
     return `<tr>
       <td class="mono">${f.data||'—'}</td>
       <td class="mono">${f.codigo||'—'}</td>
@@ -2113,6 +2125,12 @@ function renderFaltas() {
       <td class="mono">${f.pedido||'—'}</td>
       <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.cliente||'—'}</td>
       <td>${rec?`<span class="badge badge-green">✓ ${rec.data}</span>`:'<span class="badge badge-gray">Não</span>'}</td>
+      <td style="font-size:11px;font-weight:600;color:${conferente!=='—'?'var(--accent2)':'var(--muted)'}">
+        ${conferente}<br>${tbConf}
+      </td>
+      <td style="font-size:11px;font-weight:600;color:${separador!=='—'?'var(--accent3)':'var(--muted)'}">
+        ${separador}<br>${tbSep}
+      </td>
       <td style="background:rgba(74,158,255,.04)">
         <input class="conf-input ${confPor?'filled':''}" type="text"
           placeholder="Nome..."
