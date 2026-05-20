@@ -895,6 +895,9 @@ select.filter-input{cursor:pointer;}
     <div id="rsp-turnos" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;"></div>
 
     <!-- CONFERENTES + SEPARADORES LADO A LADO -->
+    <div style="background:rgba(255,184,48,.08);border:1px solid rgba(255,184,48,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:11px;color:var(--warn)">
+      ⚠️ <strong>Critério de responsabilidade:</strong> contabilizados apenas pedidos em que o item <strong>tinha estoque disponível</strong> no sistema. Faltas por estoque zerado não entram no ranking — não é responsabilidade do conferente ou separador.
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
       <div class="table-wrap">
         <div class="table-header-row">
@@ -904,7 +907,7 @@ select.filter-input{cursor:pointer;}
         <div class="scroll-wrap">
           <table class="tbl">
             <thead><tr>
-              <th>Conferente</th><th>Turno</th><th>Faltas</th><th>% Total</th><th>Pedidos</th>
+              <th>Conferente</th><th>Turno</th><th title="Itens com estoque que faltaram">📦 Itens</th><th title="% do total com estoque">% Total</th><th title="Pedidos únicos afetados">🧾 Pedidos</th>
             </tr></thead>
             <tbody id="tbody-rsp-conf"></tbody>
           </table>
@@ -918,7 +921,7 @@ select.filter-input{cursor:pointer;}
         <div class="scroll-wrap">
           <table class="tbl">
             <thead><tr>
-              <th>Separador</th><th>Turno</th><th>Faltas</th><th>% Total</th><th>Pedidos</th>
+              <th>Separador</th><th>Turno</th><th title="Itens com estoque que faltaram">📦 Itens</th><th title="% do total com estoque">% Total</th><th title="Pedidos únicos afetados">🧾 Pedidos</th>
             </tr></thead>
             <tbody id="tbody-rsp-sep"></tbody>
           </table>
@@ -2414,14 +2417,25 @@ function renderCruz() {
     if (pessoasPorTurno[turno]) pessoasPorTurno[turno].push(nome);
   });
 
+  // Conta pedidos únicos por turno também
+  const turnoCountsPed = { manha: new Set(), tarde: new Set(), noite: new Set() };
+  enrichedComEstoque.forEach(r => {
+    if (turnoCountsPed[r.turnoCon] !== undefined && r.pedido) turnoCountsPed[r.turnoCon].add(r.pedido);
+  });
+
   document.getElementById('rsp-turnos').innerHTML = ['manha','tarde','noite'].map(t => {
-    const cnt = turnoCounts[t];
-    const pct = totalComEstoque ? ((cnt/totalComEstoque)*100).toFixed(1) : 0;
-    const barW = maxTurno ? Math.round((cnt/maxTurno)*100) : 0;
+    const cnt    = turnoCounts[t];
+    const peds   = turnoCountsPed[t].size;
+    const pct    = totalComEstoque ? ((cnt/totalComEstoque)*100).toFixed(1) : 0;
+    const barW   = maxTurno ? Math.round((cnt/maxTurno)*100) : 0;
     return `<div class="turno-card ${t}">
       <div class="turno-title">${TURNO_LABEL[t]}</div>
       <div class="turno-val">${cnt}</div>
-      <div class="turno-pct">${pct}% das faltas com estoque</div>
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:4px">
+        <span style="font-size:10px;color:var(--muted)">📦 <strong style="color:var(--text)">${cnt}</strong> itens faltando</span>
+        <span style="font-size:10px;color:var(--muted)">🧾 <strong style="color:var(--text)">${peds}</strong> pedidos afetados</span>
+      </div>
+      <div class="turno-pct">${pct}% — só com estoque disponível</div>
       <div class="turno-bar-wrap"><div class="turno-bar" style="width:${barW}%"></div></div>
       <div class="turno-pessoas">${pessoasPorTurno[t].join(' · ')}</div>
     </div>`;
