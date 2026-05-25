@@ -2153,9 +2153,7 @@ function parseConf(text) {
 // ENRIQUECIMENTO DE CÓDIGO — cruza nome do produto com estoque
 // ============================================================
 function enrichCodigosFromEstoque(rows) {
-  if (!Object.keys(S.estoque).length) return rows; // estoque não carregado ainda
-
-  // Monta índice invertido: nome normalizado → código
+  // Índice de nome do estoque (lazy build)
   if (!S._estoqueNomeIdx) {
     S._estoqueNomeIdx = {};
     Object.entries(S.estoque).forEach(([cod, e]) => {
@@ -2168,18 +2166,27 @@ function enrichCodigosFromEstoque(rows) {
   let found = 0, notFound = 0;
   rows.forEach(f => {
     if (f.codigo) return; // já tem código
-    const norm = normProd(f.produto);
 
-    // 1. Busca exata normalizada
+    // 1. Extrai código do início do nome do produto
+    // Ex: "0100 ARCO SERRA REGUL.CR" → codigo=0100, produto="ARCO SERRA REGUL.CR"
+    const codInNameM = f.produto && f.produto.match(/^(\d{3,6})\s+(.+)/);
+    if (codInNameM) {
+      f.codigo  = codInNameM[1].replace(/^0+/, '') || codInNameM[1];
+      f.produto = codInNameM[2].trim();
+      found++;
+      return;
+    }
+
+    // 2. Busca exata normalizada no estoque
+    const norm = normProd(f.produto);
     if (S._estoqueNomeIdx[norm]) {
       f.codigo = S._estoqueNomeIdx[norm]; found++; return;
     }
 
-    // 2. Busca parcial — verifica se o nome da falta está contido no nome do estoque
+    // 3. Busca parcial por palavras-chave
     const palavras = norm.split(' ').filter(p => p.length > 3);
     let melhor = null, melhorScore = 0;
     for (const [normEst, cod] of Object.entries(S._estoqueNomeIdx)) {
-      // Conta quantas palavras-chave batem
       const score = palavras.filter(p => normEst.includes(p)).length;
       if (score > melhorScore && score >= Math.min(2, palavras.length)) {
         melhorScore = score; melhor = cod;
@@ -2189,7 +2196,7 @@ function enrichCodigosFromEstoque(rows) {
     else notFound++;
   });
 
-  console.log(`enrichCodigos: ${found} encontrados, ${notFound} não encontrados`);
+  console.log(`enrichCodigos: ${found} encontrados, ${notFound} sem código`);
   return rows;
 }
 
