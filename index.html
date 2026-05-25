@@ -1130,7 +1130,7 @@ const db = {
     order(col, opts={}) { this._order = `${col}.${opts.ascending===false?'desc':'asc'}`; return this; },
     limit(n) { this._limit = n; return this; },
 
-    async _fetch(method, body, extra='') {
+    async _fetch(method, body, extra='', retries=2) {
       let qs = [];
       if (method === 'GET' || method === 'DELETE') {
         if (this._select && method==='GET') qs.push(`select=${this._select}`);
@@ -1144,21 +1144,32 @@ const db = {
         'apikey': SB_KEY,
         'Authorization': `Bearer ${SB_KEY}`,
         'Content-Type': 'application/json',
-        'Prefer': method==='POST'?'return=minimal':'return=minimal'
       };
       if (method==='GET') headers['Prefer'] = 'return=representation';
+      else headers['Prefer'] = 'return=minimal';
       const opts = { method, headers };
       if (body) opts.body = JSON.stringify(body);
-      const resp = await fetch(url, opts);
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`${method} ${this._table}: ${resp.status} ${txt}`);
+
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const resp = await fetch(url, opts);
+          if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`${resp.status} ${txt}`);
+          }
+          if (method==='GET') {
+            const data = await resp.json();
+            return { data, error: null };
+          }
+          return { data: null, error: null };
+        } catch(err) {
+          if (attempt < retries) {
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          throw err;
+        }
       }
-      if (method==='GET') {
-        const data = await resp.json();
-        return { data, error: null };
-      }
-      return { data: null, error: null };
     },
 
     async insert(rows) {
@@ -1199,38 +1210,56 @@ function getPeriod() {
 // ============================================================
 
 async function dbSaveFaltas(rows, periodo) {
-  // Delete existing rows for same period before inserting fresh data
-  await db.from('faltas').delete().eq('periodo', periodo);
   if (!rows.length) return;
+
+  // Apaga só as datas presentes no novo PDF (preserva outros dias do mês no Supabase)
+  const datas = [...new Set(rows.map(r => r.data))];
+  for (const data of datas) {
+    try {
+      const url = `${SB_URL}/rest/v1/faltas?periodo=eq.${periodo}&data=eq.${encodeURIComponent(data)}`;
+      await fetch(url, { method:'DELETE', headers:{ 'apikey':SB_KEY, 'Authorization':`Bearer ${SB_KEY}` } });
+    } catch(e) {}
+  }
+
   const payload = rows.map(f => ({
     data: f.data, codigo: f.codigo, produto: f.produto,
-    qtd: f.qtd, valor: f.valor, pedido: f.pedido,
-    cliente: f.cliente, estoque: f.estoque,
-    rep: f.rep, televenda: f.televenda,
-    resolvido: false, periodo
+    qtd: f.qtd, valor: f.valor||0, pedido: f.pedido,
+    cliente: f.cliente, estoque: f.estoque||0,
+    rep: f.rep||'', televenda: f.televenda||'',
+    marca: f.marca||'', resolvido: false, periodo
   }));
-  // Insert in chunks of 500
+
   for (let i = 0; i < payload.length; i += 500) {
-    const { error } = await db.from('faltas').insert(payload.slice(i, i + 500));
-    if (error) console.error('dbSaveFaltas error:', error);
+    await db.from('faltas').insert(payload.slice(i, i+500));
   }
-  // Save historico
-  await db.from('historico').insert([{ tipo: 'faltas', arquivo: periodo, registros: rows.length, periodo }]);
+  await db.from('historico').insert([{ tipo:'faltas', arquivo:periodo, registros:rows.length, periodo }]);
 }
 
 async function dbSaveConferencia(rows, periodo) {
-  await db.from('conferencia').delete().eq('periodo', periodo);
   if (!rows.length) return;
+
+  // Apaga só as datas presentes no novo PDF de conferência
+  const datas = [...new Set(rows.map(r => r.data).filter(Boolean))];
+  for (const data of datas) {
+    try {
+      const url = `${SB_URL}/rest/v1/conferencia?periodo=eq.${periodo}&data=eq.${encodeURIComponent(data)}`;
+      await fetch(url, { method:'DELETE', headers:{ 'apikey':SB_KEY, 'Authorization':`Bearer ${SB_KEY}` } });
+    } catch(e) {}
+  }
+  // Se não tem data nas linhas, apaga tudo do período
+  if (!datas.length) {
+    await db.from('conferencia').delete().eq('periodo', periodo);
+  }
+
   const payload = rows.map(c => ({
-    data: c.data, hora_ini: c.hora_ini, pedido: c.pedido,
-    cliente: c.cliente, conferente: c.conferente, separador: c.separador,
-    itens: c.itens, disp: c.disp, vol: c.vol, tempo: c.tempo, periodo
+    data: c.data||'', pedido: c.pedido,
+    cliente: c.cliente||'', conferente: c.conferente,
+    separador: c.separador||'', periodo
   }));
   for (let i = 0; i < payload.length; i += 500) {
-    const { error } = await db.from('conferencia').insert(payload.slice(i, i + 500));
-    if (error) console.error('dbSaveConferencia error:', error);
+    await db.from('conferencia').insert(payload.slice(i, i+500));
   }
-  await db.from('historico').insert([{ tipo: 'conferencia', arquivo: periodo, registros: rows.length, periodo }]);
+  await db.from('historico').insert([{ tipo:'conferencia', arquivo:periodo, registros:rows.length, periodo }]);
 }
 
 async function dbSaveEstoque(rows) {
@@ -1287,16 +1316,35 @@ async function dbLoadAll() {
   try {
     const periodo = getPeriod();
 
-    // Load faltas
+    // Load faltas — só sobrescreve se não tiver PDF carregado localmente
     const { data: faltas } = await db.from('faltas').select('*').eq('periodo', periodo).order('data');
     if (faltas && faltas.length) {
-      S.faltas = faltas.map(f => ({ ...f, id: f.id, data: normDate(f.data) }));
-      S.resolved = new Set(faltas.filter(f => f.resolvido).map(f => f.id));
+      if (!S._pdfLoaded) {
+        // Sem PDF local — usa dados do Supabase
+        S.faltas = faltas.map(f => ({ ...f, id: f.id, data: normDate(f.data) }));
+        S.resolved = new Set(faltas.filter(f => f.resolvido).map(f => f.id));
+      } else {
+        // PDF local carregado — mescla: mantém dados locais mas atualiza status resolvido do servidor
+        const resolvedSet = new Set(faltas.filter(f => f.resolvido).map(f => f.id));
+        S.resolved = new Set([...S.resolved, ...resolvedSet]);
+        // Se o Supabase tiver dados mais novos (datas diferentes do PDF local), adiciona
+        const localDatas = new Set(S.faltas.map(f => f.data));
+        const serverExtras = faltas
+          .map(f => ({ ...f, data: normDate(f.data) }))
+          .filter(f => !localDatas.has(f.data));
+        if (serverExtras.length > 0) {
+          S.faltas = [...S.faltas, ...serverExtras];
+        }
+      }
     }
 
-    // Load conferencia
+    // Load conferencia — mescla igual
     const { data: conf } = await db.from('conferencia').select('*').eq('periodo', periodo);
-    if (conf && conf.length) S.conferencia = conf;
+    if (conf && conf.length) {
+      if (!S._confLoaded) {
+        S.conferencia = conf;
+      }
+    }
 
     // Load estoque
     const { data: est } = await db.from('estoque').select('*');
@@ -1349,7 +1397,13 @@ async function dbLoadAll() {
   } catch(err) {
     console.error('dbLoadAll error:', err);
     hideDbStatus();
-    toast('⚠ Sem conexão com servidor — modo offline');
+    const msg = err.message || '';
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      toast('⚠ Sem conexão com servidor — tentando novamente em 30s...');
+      setTimeout(() => dbLoadAll(), 30000);
+    } else {
+      toast('⚠ Erro servidor: ' + msg.substring(0, 60));
+    }
   }
 }
 
@@ -1707,6 +1761,7 @@ function loadFaltasPDF(input) {
   extractPDFText(file).then(async text => {
     const parsed = parseFaltas(text);
     S.faltas = parsed;
+    S._pdfLoaded = true; // marca que temos dados locais — não sobrescrever com Supabase
     const now = Date.now();
     const periodo = getPeriod();
     // firstSeen local cache
@@ -1737,6 +1792,7 @@ function loadConfPDF(input) {
   markCard('card-conf','sub-conf','Lendo PDF...');
   extractPDFText(file).then(async text => {
     S.conferencia = parseConf(text);
+    S._confLoaded = true;
     const now = Date.now();
     const periodo = getPeriod();
     S.updates.conf = { ts:now, file:file.name, count:S.conferencia.length };
@@ -1887,64 +1943,142 @@ function loadRecebimento(input) {
 function parseFaltas(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const rows = [];
-  let cod = '', nome = '';
+  let marcaAtual = '';
 
-  for (let i = 0; i < lines.length; i++) {
-    const t = lines[i];
+  // Detecta formato: "por Marca" (Manager of Decision II) ou "por Produto" (Manager of Decision I)
+  const isMarca = lines.some(l => /Relat.+por.*Marca/i.test(l) || /Marca:/i.test(l));
 
-    // Product header: "Produto: 0169 - CADEADO LATAO PADO 20MM"
-    // PDF.js may split across tokens, so also check concatenated
-    const pm = t.match(/Produto:\s*(\d+)\s*[-–]\s*(.+)/i);
-    if (pm) { cod = pm[1].trim(); nome = pm[2].trim(); continue; }
+  if (isMarca) {
+    // ── FORMATO II: linhas de falta diretas agrupadas por marca ──
+    // Ex: "22/05/2026 2 COLA ADESIVA JMT 3M 73G 17,58 413.124/01 FERNANDO FERREIRA 0 BRUNO BUENO SEM TELEVENDA"
+    for (const t of lines) {
+      // Marca header
+      const mM = t.match(/^Marca:\s*(.+)/i);
+      if (mM) { marcaAtual = mM[1].trim(); continue; }
 
-    // Skip totals, headers, footers
-    if (/^TOTAL\b/i.test(t) || /^Manager of Decision/i.test(t) || /^Relat/i.test(t) || /^DATA\b/.test(t) || /^Faltas/i.test(t) || /^Periodo/i.test(t)) continue;
+      // Skip totals, headers, footers
+      if (/^TOTAL\b/i.test(t) || /^Manager/i.test(t) || /^Relat/i.test(t) ||
+          /^DATA\b/.test(t) || /^Faltas/i.test(t) || /^Periodo/i.test(t) ||
+          /^Página/i.test(t) || /^QTE\b/.test(t) || /^V\.TOTAL/i.test(t)) continue;
 
-    // Data row: starts with dd/mm/yyyy
-    const dm = t.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+/);
-    if (!dm || !cod) continue;
+      // Data row: starts with dd/mm/yyyy
+      const dm = t.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.+)/);
+      if (!dm) continue;
 
-    const data = dm[1];
-    const qtd = parseInt(dm[2]);
+      const data = dm[1];
+      const qtd  = parseInt(dm[2]);
+      const rest = dm[3];
 
-    // Extract pedido number like "412.560/01"
-    const pedM = t.match(/(\d{3}\.\d{3}\/\d{2})/);
-    const pedido = pedM ? pedM[1] : '';
+      // Pedido: 413.124/01
+      const pedM = rest.match(/(\d{3}\.\d{3}\/\d{2})/);
+      const pedido = pedM ? pedM[1] : '';
 
-    // Extract all numbers to get valor and estoque
-    const allNums = t.match(/-?\d+[,.]?\d*/g) || [];
-    // valor is usually a decimal like 86,54
-    const valorM = t.match(/\b(\d{1,6}[,.]\d{2})\b/);
-    const valor = valorM ? parseFloat(valorM[1].replace(',','.')) : 0;
+      // Valor: decimal antes do pedido
+      const valorM = rest.match(/(\d{1,6}[,.]\d{2})\s+\d{3}\.\d{3}/);
+      const valor = valorM ? parseFloat(valorM[1].replace(',','.')) : 0;
 
-    // Estoque: number just before REP (usually a short integer after pedido+cliente)
-    // Try to find it as the number right before the rep name
-    const afterPed = pedido ? t.substring(t.indexOf(pedido) + pedido.length) : t;
-    const estoqueM = afterPed.match(/\s+(-?\d+)\s+[A-Z]/);
-    const estoque = estoqueM ? parseInt(estoqueM[1]) : 0;
+      // Produto: texto entre qtd e valor
+      const prodM = rest.match(/^(.+?)\s+\d{1,6}[,.]\d{2}\s+\d{3}\.\d{3}/);
+      const produto = prodM ? prodM[1].trim() : rest.substring(0, 40).trim();
 
-    // Cliente: text right after pedido, up to ~25 chars
-    let cliente = '';
-    if (pedido) {
-      const idx = t.indexOf(pedido) + pedido.length;
-      cliente = t.substring(idx, idx + 25).trim().replace(/\s+/g, ' ');
+      // Após o pedido: cliente, estoque, rep, televenda
+      let cliente = '', estoque = 0, rep = '', televenda = '';
+      if (pedido) {
+        const afterPed = rest.substring(rest.indexOf(pedido) + pedido.length).trim();
+        // Estoque: número isolado (pode ser negativo) antes do rep
+        // Pattern: CLIENTE ... ESTOQUE REP TELEVENDA
+        // A parte após pedido: "FERNANDO FERREIRA DE... 0 BRUNO BUENO SEM TELEVENDA"
+        const semTV  = afterPed.includes('SEM TELEVENDA');
+        const superM = afterPed.match(/SUPER\s+\w+/g) || [];
+
+        // Encontra o estoque: número entre o cliente e o rep
+        // O estoque é sempre um inteiro (possivelmente negativo) seguido do nome do rep
+        const estM = afterPed.match(/\s(-?\d+)\s+[A-Z][A-Z\s]+?(SEM TELEVENDA|SUPER|\s*$)/);
+        estoque = estM ? parseInt(estM[1]) : 0;
+
+        // Televenda: última parte
+        if (semTV) {
+          televenda = 'SEM TELEVENDA';
+          // Rep: token antes de SEM TELEVENDA
+          const beforeSemTV = afterPed.substring(0, afterPed.indexOf('SEM TELEVENDA')).trim();
+          const repParts = beforeSemTV.split(/\s+/);
+          // Rep é normalmente as últimas 1-3 palavras maiúsculas antes de SEM TELEVENDA
+          // mas após o estoque
+          const estIdx = beforeSemTV.search(/\s-?\d+\s/);
+          if (estIdx >= 0) {
+            const afterEst = beforeSemTV.substring(estIdx).replace(/^\s*-?\d+\s*/, '').trim();
+            rep = afterEst || repParts.slice(-2).join(' ');
+          } else {
+            rep = repParts.slice(-2).join(' ');
+          }
+          // Cliente: tudo entre pedido e o número do estoque
+          const pidxFull = afterPed.search(/\s-?\d+\s+[A-Z]/);
+          cliente = pidxFull > 0 ? afterPed.substring(0, pidxFull).trim() : afterPed.substring(0, 30).trim();
+        } else {
+          // SUPER REP caso
+          televenda = superM.length ? superM[superM.length-1] : '';
+          rep = superM.length > 1 ? superM[0] : '';
+          // Cliente: antes do estoque
+          const pidxFull = afterPed.search(/\s-?\d+\s+[A-Z]/);
+          cliente = pidxFull > 0 ? afterPed.substring(0, pidxFull).trim() : afterPed.substring(0, 30).trim();
+        }
+      }
+
+      // Gera ID baseado no conteúdo para evitar duplicados
+      const id = `${data}_${pedido}_${qtd}_${produto.substring(0,10)}`.replace(/\W/g,'_');
+
+      rows.push({
+        data, qtd, produto, codigo: '', valor,
+        pedido, cliente: cliente.substring(0,40),
+        estoque, rep, televenda, marca: marcaAtual,
+        id: id + '_' + Math.random().toString(36).substr(2,5),
+        resolvido: false
+      });
     }
+  } else {
+    // ── FORMATO I: agrupado por produto ──
+    // Ex: "Produto: 0173 - CADEADO LATAO PADO 40MM"
+    let cod = '', nome = '';
+    for (const t of lines) {
+      const pm = t.match(/Produto:\s*(\d+)\s*[-–]\s*(.+)/i);
+      if (pm) { cod = pm[1].trim(); nome = pm[2].trim(); continue; }
 
-    // Televenda: last token(s)
-    const semTV = t.includes('SEM TELEVENDA');
-    const tvM = t.match(/(SUPER\s+\w+|\w+)\s*$/);
-    const televenda = semTV ? 'SEM TELEVENDA' : (tvM ? tvM[1] : '');
+      if (/^TOTAL\b/i.test(t) || /^Manager/i.test(t) || /^Relat/i.test(t) ||
+          /^DATA\b/.test(t) || /^Faltas/i.test(t) || /^Periodo/i.test(t)) continue;
 
-    // Rep: token before televenda
-    const repM = t.match(/([A-Z][A-Z\s]+?)\s+(SEM TELEVENDA|SUPER\s+\w+|\w+)\s*$/);
-    const rep = repM ? repM[1].trim() : '';
+      const dm = t.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+/);
+      if (!dm || !cod) continue;
 
-    rows.push({
-      data, qtd, produto: nome, codigo: cod,
-      valor, pedido, cliente, estoque, rep, televenda,
-      id: Math.random().toString(36).substr(2, 9)
-    });
+      const pedM = t.match(/(\d{3}\.\d{3}\/\d{2})/);
+      const pedido = pedM ? pedM[1] : '';
+      const valorM = t.match(/\b(\d{1,6}[,.]\d{2})\b/);
+      const valor = valorM ? parseFloat(valorM[1].replace(',','.')) : 0;
+      const afterPed = pedido ? t.substring(t.indexOf(pedido) + pedido.length) : t;
+      const estoqueM = afterPed.match(/\s+(-?\d+)\s+[A-Z]/);
+      const estoque = estoqueM ? parseInt(estoqueM[1]) : 0;
+      let cliente = '';
+      if (pedido) {
+        const idx = t.indexOf(pedido) + pedido.length;
+        cliente = t.substring(idx, idx+25).trim();
+      }
+      const semTV = t.includes('SEM TELEVENDA');
+      const tvM = t.match(/(SUPER\s+\w+|\w+)\s*$/);
+      const televenda = semTV ? 'SEM TELEVENDA' : (tvM ? tvM[1] : '');
+      const repM = t.match(/([A-Z][A-Z\s]+?)\s+(SEM TELEVENDA|SUPER\s+\w+|\w+)\s*$/);
+      const rep = repM ? repM[1].trim() : '';
+
+      rows.push({
+        data: dm[1], qtd: parseInt(dm[2]),
+        produto: nome, codigo: cod, valor,
+        pedido, cliente, estoque, rep, televenda,
+        id: Math.random().toString(36).substr(2,9),
+        resolvido: false
+      });
+    }
   }
+
+  console.log(`parseFaltas: formato=${isMarca?'II-Marca':'I-Produto'}, linhas=${lines.length}, rows=${rows.length}`);
+  if (rows.length > 0) console.log('Amostra:', rows.slice(0,2));
   return rows;
 }
 
@@ -1953,50 +2087,57 @@ function parseConf(text) {
   const rows = [];
   let conf = '';
 
-  for (const line of lines) {
-    const t = line;
-
+  for (const t of lines) {
     // Conferente header
     const cm = t.match(/^Conferente:\s*(.+)/i);
     if (cm) { conf = cm[1].trim(); continue; }
 
     // Skip headers/footers
-    if (/^Manager of Decision/i.test(t) || /^Relat/i.test(t) || /^PEDIDO/i.test(t) || /^Report/i.test(t)) continue;
+    if (/^Manager of Decision/i.test(t) || /^Relat/i.test(t) ||
+        /^PEDIDO/i.test(t) || /^Report\s/i.test(t) ||
+        /^Pedidos Conferidos/i.test(t) || /^Página/i.test(t)) continue;
 
-    // Data row: contains a pedido number and a time
+    // Linha com pedido: 414.034/01
     const pedM = t.match(/(\d{3}\.\d{3}\/\d{2})/);
-    const timeM = t.match(/(\d{2}\/\d{2})\s+(\d{2}:\d{2})/);
     if (!pedM || !conf) continue;
 
-    const allNums = t.match(/\d+/g) || [];
-    const tempoM = (t.match(/\d{2}:\d{2}:\d{2}/g) || []);
+    const pedido = pedM[1];
 
-    // Date from something like "15/05 02:57" or inline in line
-    const dateM = t.match(/(\d{2}\/\d{2})/);
-    const date = dateM ? dateM[1] : '';
+    // Data: dd/mm (ex: 22/05)
+    const dateM = t.match(/(\d{2}\/\d{2})\s+\d{2}:\d{2}/);
+    const data = dateM ? dateM[1] : '';
 
-    // Separador: last ALL-CAPS word(s) at end
-    const sepM = t.match(/([A-ZÁÉÍÓÚÀÈÌÒÙÃÕ][A-ZÁÉÍÓÚÀÈÌÒÙÃÕ\s]{2,})\s*$/);
+    // Separador: as últimas palavra(s) em maiúsculas no final da linha
+    // O separador é o último campo — ex: "GABRIEL FIGUEIR" ou "RODRIGO SOUZA"
+    // Pode ter data anterior ex: "22/05 00:02" antes do separador
+    // Padrão: ... 22/05 00:02 SEPARADOR
+    const sepM = t.match(/\d{2}\/\d{2}\s+\d{2}:\d{2}\s+([A-ZÁÉÍÓÚÀÈÌÒÙÃÕ][A-ZÁÉÍÓÚÀÈÌÒÙÃÕ\s\.]+?)\s*$/);
     const separador = sepM ? sepM[1].trim() : '';
 
-    // Cliente: text after pedido
-    const pidx = t.indexOf(pedM[1]);
-    const cliente = t.substring(pidx + pedM[1].length, pidx + pedM[1].length + 30).trim();
+    // Separador também pode aparecer como "NOME SOBRENOME" ao final sem data
+    // Tenta capturar o separador de outra forma se o acima falhar
+    let sep = separador;
+    if (!sep) {
+      const altSepM = t.match(/([A-Z][A-Z\s]{2,})\s*$/);
+      sep = altSepM ? altSepM[1].trim() : '';
+    }
+
+    // Cliente: texto logo após o pedido
+    const pidx = t.indexOf(pedido) + pedido.length;
+    const cliente = t.substring(pidx, pidx + 35).trim().replace(/^\d+\s+\d+\s+/, '');
 
     rows.push({
-      data: date,
-      hora_ini: timeM ? timeM[2] : '',
-      pedido: pedM[1],
-      cliente,
+      pedido,
+      data,
       conferente: conf,
-      separador,
-      itens: parseInt(allNums[allNums.length - 6]) || 0,
-      disp: parseInt(allNums[allNums.length - 5]) || 0,
-      vol: parseInt(allNums[allNums.length - 4]) || 0,
-      tempo: tempoM[0] || '',
+      separador: sep,
+      cliente: cliente.substring(0, 35),
       id: Math.random().toString(36).substr(2, 9)
     });
   }
+
+  console.log(`parseConf: ${rows.length} registros`);
+  if (rows.length > 0) console.log('Amostra conf:', rows.slice(0,2));
   return rows;
 }
 
