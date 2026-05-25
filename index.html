@@ -1760,7 +1760,8 @@ function loadFaltasPDF(input) {
   markCard('card-faltas','sub-faltas','Lendo PDF...');
   extractPDFText(file).then(async text => {
     const parsed = parseFaltas(text);
-    S.faltas = parsed;
+    const enriched = enrichCodigosFromEstoque(parsed);
+    S.faltas = enriched;
     S._pdfLoaded = true; // marca que temos dados locais — não sobrescrever com Supabase
     const now = Date.now();
     const periodo = getPeriod();
@@ -1876,8 +1877,15 @@ function loadEstoque(input) {
       else console.log(`✗ ${cod} → NÃO ENCONTRADO`);
     });
 
+    // Rebuild índice de nome ao recarregar estoque
+    S._estoqueNomeIdx = null;
+    // Re-enrich faltas sem código (caso PDF foi carregado antes do estoque)
+    if (S.faltas.length) {
+      S.faltas = enrichCodigosFromEstoque(S.faltas);
+      console.log('Re-enrich após estoque: codigos preenchidos');
+    }
+
     const now = Date.now();
-    S.updates.est = { ts:now, file:file.name, count };
     safeSave(KEYS.updates, S.updates);
     addHistory('estoque', `Estoque: ${file.name}`, count);
     markCard('card-est','sub-est',file.name);
@@ -2142,8 +2150,57 @@ function parseConf(text) {
 }
 
 // ============================================================
-// HELPERS
+// ENRIQUECIMENTO DE CÓDIGO — cruza nome do produto com estoque
 // ============================================================
+function enrichCodigosFromEstoque(rows) {
+  if (!Object.keys(S.estoque).length) return rows; // estoque não carregado ainda
+
+  // Monta índice invertido: nome normalizado → código
+  if (!S._estoqueNomeIdx) {
+    S._estoqueNomeIdx = {};
+    Object.entries(S.estoque).forEach(([cod, e]) => {
+      if (!e.produto) return;
+      const norm = normProd(e.produto);
+      if (!S._estoqueNomeIdx[norm]) S._estoqueNomeIdx[norm] = cod;
+    });
+  }
+
+  let found = 0, notFound = 0;
+  rows.forEach(f => {
+    if (f.codigo) return; // já tem código
+    const norm = normProd(f.produto);
+
+    // 1. Busca exata normalizada
+    if (S._estoqueNomeIdx[norm]) {
+      f.codigo = S._estoqueNomeIdx[norm]; found++; return;
+    }
+
+    // 2. Busca parcial — verifica se o nome da falta está contido no nome do estoque
+    const palavras = norm.split(' ').filter(p => p.length > 3);
+    let melhor = null, melhorScore = 0;
+    for (const [normEst, cod] of Object.entries(S._estoqueNomeIdx)) {
+      // Conta quantas palavras-chave batem
+      const score = palavras.filter(p => normEst.includes(p)).length;
+      if (score > melhorScore && score >= Math.min(2, palavras.length)) {
+        melhorScore = score; melhor = cod;
+      }
+    }
+    if (melhor) { f.codigo = melhor; found++; }
+    else notFound++;
+  });
+
+  console.log(`enrichCodigos: ${found} encontrados, ${notFound} não encontrados`);
+  return rows;
+}
+
+function normProd(s) {
+  return String(s||'')
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
+    .replace(/[^A-Z0-9\s]/g,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
 function markCard(cardId, subId, name) {
   document.getElementById(cardId).classList.add('loaded');
   const sub=document.getElementById(subId);
